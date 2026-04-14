@@ -48,6 +48,7 @@ import type {
   DbClockMessage,
   DbPayee,
   DbPayeeMapping,
+  DbSuggestion,
   DbTag,
   DbTransaction,
   DbViewTransaction,
@@ -993,4 +994,68 @@ export function findTags() {
     `,
     ['%#%'],
   );
+}
+
+// Suggestions
+
+export function getSuggestions(transactionId: string) {
+  return all<DbSuggestion>(
+    `
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE tombstone = 0 AND status = 'pending' AND transaction_id = ?
+    ORDER BY created_at
+  `,
+    [transactionId],
+  );
+}
+
+export function getSuggestionsByTransactionIds(ids: string[]) {
+  if (ids.length === 0) return Promise.resolve([]);
+  const placeholders = toSqlQueryParameters(ids);
+  return all<DbSuggestion>(
+    `
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE tombstone = 0 AND status = 'pending' AND transaction_id IN (${placeholders})
+    ORDER BY transaction_id, created_at
+  `,
+    ids,
+  );
+}
+
+export function getSuggestionById(id: string) {
+  return first<DbSuggestion>(
+    `
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE id = ? AND tombstone = 0
+  `,
+    [id],
+  );
+}
+
+export function getAllPendingSuggestions() {
+  return all<DbSuggestion>(`
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE tombstone = 0 AND status = 'pending'
+    ORDER BY created_at
+  `);
+}
+
+export function insertSuggestion(
+  suggestion: Omit<DbSuggestion, 'id' | 'tombstone'>,
+): Promise<DbSuggestion['id']> {
+  return insertWithUUID('suggestions', suggestion);
+}
+
+export function deleteSuggestion(suggestion: Pick<DbSuggestion, 'id'>) {
+  return delete_('suggestions', suggestion.id);
+}
+
+export function updateSuggestion(
+  suggestion: Partial<DbSuggestion> & Pick<DbSuggestion, 'id'>,
+) {
+  return update('suggestions', suggestion);
 }

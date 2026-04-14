@@ -206,6 +206,18 @@ export const schema = {
     created_at: f('integer', { required: true }),
     tombstone: f('boolean'),
   },
+  suggestions: {
+    id: f('id'),
+    transaction_id: f('id', { ref: 'transactions', required: true }),
+    suggestion: f('json', { required: true }),
+    source: f('string', { required: true }),
+    source_id: f('string'),
+    confidence: f('float'),
+    group_id: f('string'),
+    status: f('string', { default: 'pending' }),
+    created_at: f('string', { required: true }),
+    tombstone: f('boolean'),
+  },
 };
 
 export const schemaConfig: SchemaConfig = {

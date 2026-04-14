@@ -340,3 +340,16 @@ export type DbTag = {
   description?: string | null;
   tombstone: 1 | 0;
 };
+
+export type DbSuggestion = {
+  id: string;
+  transaction_id: DbTransaction['id'];
+  suggestion: JsonString;
+  source: string;
+  source_id?: string | null;
+  confidence?: number | null;
+  group_id?: string | null;
+  status: 'pending' | 'accepted' | 'dismissed';
+  created_at: string;
+  tombstone: 1 | 0;
+};
