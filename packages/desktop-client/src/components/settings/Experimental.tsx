@@ -228,6 +228,9 @@ export function ExperimentalFeatures() {
             >
               <Trans>Payee Locations</Trans>
             </FeatureToggle>
+            <FeatureToggle flag="suggestions">
+              <Trans>Transaction Suggestions</Trans>
+            </FeatureToggle>
             {showServerPrefs && (
               <ServerFeatureToggle
                 prefName="flags.plugins"

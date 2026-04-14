@@ -1219,12 +1219,9 @@ describe('Suggestions CRUD', () => {
   });
 
   test('suggestions appear on transaction query results', async () => {
-    await api.createSuggestion(
-      transactionId,
-      { category: categoryId },
-      'llm',
-      { confidence: 0.9 },
-    );
+    await api.createSuggestion(transactionId, { category: categoryId }, 'llm', {
+      confidence: 0.9,
+    });
 
     // Query transactions — suggestions should be attached
     const transactions = await api.getTransactions(

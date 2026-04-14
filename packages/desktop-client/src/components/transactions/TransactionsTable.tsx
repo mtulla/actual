@@ -45,6 +45,7 @@ import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { Tooltip } from '@actual-app/components/tooltip';
 import { View } from '@actual-app/components/view';
+import { send } from '@actual-app/core/platform/client/connection';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import { getStatusLabel } from '@actual-app/core/shared/schedules';
@@ -84,6 +85,7 @@ import { PayeeAutocomplete } from '#components/autocomplete/PayeeAutocomplete';
 import { getStatusProps } from '#components/schedules/StatusBadge';
 import type { StatusTypes } from '#components/schedules/StatusBadge';
 import { DateSelect } from '#components/select/DateSelect';
+import { SuggestionRow } from '#components/suggestions/SuggestionRow';
 import {
   Cell,
   CellButton,
@@ -92,6 +94,7 @@ import {
   Field,
   InputCell,
   Row,
+  ROW_HEIGHT,
   SelectCell,
   Table,
   UnexposedCellContent,
@@ -119,6 +122,7 @@ import type {
   OnDragChangeCallback,
   OnDropCallback,
 } from '#hooks/useDragDrop';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useLocalPref } from '#hooks/useLocalPref';
 import { useMergedRefs } from '#hooks/useMergedRefs';
 import { usePrevious } from '#hooks/usePrevious';
@@ -2291,6 +2295,10 @@ function TransactionTableInner({
   const containerRef = createRef<HTMLDivElement>();
   const isAddingPrev = usePrevious(props.isAdding);
   const [scrollWidth, setScrollWidth] = useState(0);
+  const suggestionsEnabled = useFeatureFlag('suggestions');
+  const [dismissedSuggestions, setDismissedSuggestions] = useState(
+    new Set<string>(),
+  );
 
   function saveScrollWidth(parent: number, child: number) {
     const width = parent > 0 && child > 0 && parent - child;
@@ -2336,13 +2344,48 @@ function TransactionTableInner({
   }, [isAddingPrev, props.isAdding, newNavigator]);
 
   // Don't render reconciled transactions if we're hiding them.
-  const transactionsToRender = useMemo(
-    () =>
-      props.showReconciled
-        ? props.transactions
-        : props.transactions.filter(t => !t.reconciled),
-    [props.transactions, props.showReconciled],
-  );
+  // When suggestions are enabled, inject synthetic suggestion rows after
+  // transactions that have pending suggestions.
+  const transactionsToRender = useMemo(() => {
+    const filtered = props.showReconciled
+      ? props.transactions
+      : props.transactions.filter(t => !t.reconciled);
+
+    if (!suggestionsEnabled) return filtered;
+
+    const result: TransactionEntity[] = [];
+    for (const t of filtered) {
+      result.push(t);
+      if (
+        t.suggestions &&
+        t.suggestions.length > 0 &&
+        !dismissedSuggestions.has(t.id)
+      ) {
+        result.push({
+          id: `suggestion-values-${t.id}`,
+          account: t.account,
+          amount: 0,
+          date: t.date,
+          _suggestionType: 'values',
+          _parentTransaction: t,
+        } as unknown as TransactionEntity);
+        result.push({
+          id: `suggestion-buttons-${t.id}`,
+          account: t.account,
+          amount: 0,
+          date: t.date,
+          _suggestionType: 'buttons',
+          _parentTransaction: t,
+        } as unknown as TransactionEntity);
+      }
+    }
+    return result;
+  }, [
+    props.transactions,
+    props.showReconciled,
+    suggestionsEnabled,
+    dismissedSuggestions,
+  ]);
 
   const renderRow: TableProps<TransactionEntity>['renderItem'] = ({
     item,
@@ -2420,6 +2463,76 @@ function TransactionTableInner({
     };
     const prevRowDate = findPrevReorderableDate();
     const nextRowDate = findNextReorderableDate();
+
+    // Handle synthetic suggestion rows
+    const suggestionType = (trans as unknown as { _suggestionType?: string })
+      ._suggestionType;
+    if (suggestionType) {
+      const parentTrans = (
+        trans as unknown as { _parentTransaction: TransactionEntity }
+      )._parentTransaction;
+      const suggestion = parentTrans.suggestions![0];
+      const suggestedFields = suggestion.suggestion;
+
+      const dismissSuggestion = () => {
+        setDismissedSuggestions(prev => new Set([...prev, parentTrans.id]));
+        void send('suggestion-dismiss', { id: suggestion.id });
+      };
+
+      if (suggestionType === 'values') {
+        return (
+          <SuggestionRow
+            suggestion={suggestion}
+            parentAmount={parentTrans.amount}
+            categoryGroups={categoryGroups}
+            payees={payees}
+            accounts={accounts}
+            showAccount={showAccount}
+            showCleared={showCleared}
+            showBalance={showBalances}
+          />
+        );
+      }
+
+      if (suggestionType === 'buttons') {
+        return (
+          <Row
+            style={{
+              backgroundColor: theme.tableRowBackgroundHover,
+              height: ROW_HEIGHT,
+            }}
+          >
+            <View
+              style={{
+                flex: 1,
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                paddingRight: 10,
+                gap: 10,
+              }}
+            >
+              <Button variant="normal" onPress={dismissSuggestion}>
+                <Trans>Dismiss</Trans>
+              </Button>
+              <Button
+                variant="primary"
+                style={{ padding: '4px 10px' }}
+                onPress={() => {
+                  props.onSave({
+                    ...parentTrans,
+                    ...suggestedFields,
+                  } as TransactionEntity);
+                  dismissSuggestion();
+                }}
+              >
+                <Trans>Accept Suggestion</Trans>
+              </Button>
+            </View>
+          </Row>
+        );
+      }
+    }
 
     return (
       <Transaction
