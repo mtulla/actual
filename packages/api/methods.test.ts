@@ -1082,3 +1082,164 @@ test('Schedules: successfully complete schedules operations', async () => {
     ]),
   );
 });
+
+describe('Suggestions CRUD', () => {
+  let accountId: string;
+  let transactionId: string;
+  let categoryId: string;
+
+  beforeEach(async () => {
+    await api.loadBudget(budgetName);
+    accountId = await api.createAccount({ name: 'suggestion-test-account' }, 0);
+    // Create a fresh category so category_mapping is properly set up
+    categoryId = await api.createCategory({
+      name: 'Test Groceries',
+      group_id: 'fc3825fd-b982-4b72-b768-5b30844cf832',
+    });
+    await api.addTransactions(accountId, [
+      {
+        date: '2024-01-15',
+        amount: -5000,
+        imported_id: 'sugg-test-1',
+        notes: 'grocery store',
+      },
+    ]);
+    const transactions = await api.getTransactions(
+      accountId,
+      '2024-01-01',
+      '2024-01-31',
+    );
+    transactionId = transactions[0].id;
+  });
+
+  test('create and read suggestions', async () => {
+    // Create a suggestion
+    const suggestion = await api.createSuggestion(
+      transactionId,
+      { category: categoryId },
+      'llm',
+      { confidence: 0.95 },
+    );
+
+    expect(suggestion).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        transaction_id: transactionId,
+        suggestion: { category: categoryId },
+        source: 'llm',
+        confidence: 0.95,
+        status: 'pending',
+        created_at: expect.any(String),
+      }),
+    );
+
+    // Read suggestions for the transaction
+    const suggestions = await api.getSuggestions(transactionId);
+    expect(suggestions).toHaveLength(1);
+    expect(suggestions[0]).toEqual(
+      expect.objectContaining({
+        id: suggestion.id,
+        suggestion: { category: categoryId },
+        source: 'llm',
+      }),
+    );
+  });
+
+  test('create multi-field suggestion', async () => {
+    const payeeId = await api.createPayee({ name: 'Whole Foods' });
+
+    const suggestion = await api.createSuggestion(
+      transactionId,
+      { category: categoryId, payee: payeeId },
+      'api',
+      { sourceId: 'my-llm-tool', confidence: 0.8, groupId: 'group-1' },
+    );
+
+    expect(suggestion.suggestion).toEqual({
+      category: categoryId,
+      payee: payeeId,
+    });
+    expect(suggestion.source_id).toBe('my-llm-tool');
+    expect(suggestion.group_id).toBe('group-1');
+  });
+
+  test('accept suggestion applies fields to transaction', async () => {
+    // Create suggestion to set category
+    const suggestion = await api.createSuggestion(
+      transactionId,
+      { category: categoryId },
+      'llm',
+    );
+
+    // Verify transaction has no category yet
+    let transactions = await api.getTransactions(
+      accountId,
+      '2024-01-01',
+      '2024-01-31',
+    );
+    expect(transactions[0].category).toBeNull();
+
+    // Accept the suggestion
+    await api.acceptSuggestion(suggestion.id);
+
+    // Verify transaction now has the suggested category
+    transactions = await api.getTransactions(
+      accountId,
+      '2024-01-01',
+      '2024-01-31',
+    );
+    expect(transactions[0].category).toBe(categoryId);
+
+    // Verify suggestion is no longer pending
+    const suggestions = await api.getSuggestions(transactionId);
+    expect(suggestions).toHaveLength(0);
+  });
+
+  test('dismiss suggestion does not change transaction', async () => {
+    const suggestion = await api.createSuggestion(
+      transactionId,
+      { category: categoryId },
+      'llm',
+    );
+
+    // Dismiss the suggestion
+    await api.dismissSuggestion(suggestion.id);
+
+    // Verify transaction is unchanged
+    const transactions = await api.getTransactions(
+      accountId,
+      '2024-01-01',
+      '2024-01-31',
+    );
+    expect(transactions[0].category).toBeNull();
+
+    // Verify suggestion is no longer pending
+    const suggestions = await api.getSuggestions(transactionId);
+    expect(suggestions).toHaveLength(0);
+  });
+
+  test('suggestions appear on transaction query results', async () => {
+    await api.createSuggestion(
+      transactionId,
+      { category: categoryId },
+      'llm',
+      { confidence: 0.9 },
+    );
+
+    // Query transactions — suggestions should be attached
+    const transactions = await api.getTransactions(
+      accountId,
+      '2024-01-01',
+      '2024-01-31',
+    );
+
+    expect(transactions[0].suggestions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          suggestion: { category: categoryId },
+          source: 'llm',
+        }),
+      ]),
+    );
+  });
+});

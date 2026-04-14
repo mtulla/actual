@@ -7,6 +7,7 @@ import type {
   APIFileEntity,
   APIPayeeEntity,
   APIScheduleEntity,
+  APISuggestionEntity,
   APITagEntity,
 } from '#server/api-models';
 import type { BudgetFileHandlers } from '#server/budgetfiles/app';
@@ -285,4 +286,21 @@ export type ApiHandlers = {
   'api/get-server-version': () => Promise<
     { error: 'no-server' } | { error: 'network-failure' } | { version: string }
   >;
+
+  'api/suggestions-get': (arg: {
+    transactionId: string;
+  }) => Promise<APISuggestionEntity[]>;
+
+  'api/suggestion-create': (arg: {
+    transactionId: string;
+    suggestion: Record<string, unknown>;
+    source: string;
+    sourceId?: string;
+    confidence?: number;
+    groupId?: string;
+  }) => Promise<APISuggestionEntity>;
+
+  'api/suggestion-accept': (arg: { id: string }) => Promise<void>;
+
+  'api/suggestion-dismiss': (arg: { id: string }) => Promise<void>;
 };

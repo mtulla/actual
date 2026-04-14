@@ -5,6 +5,7 @@ import type {
   CategoryGroupEntity,
   PayeeEntity,
   ScheduleEntity,
+  SuggestionEntity,
   TagEntity,
 } from '#types/models';
 
@@ -140,6 +141,35 @@ export const tagModel = {
 
   fromExternal(tag: Partial<APITagEntity>): Partial<TagEntity> {
     return tag;
+  },
+};
+
+export type APISuggestionEntity = Pick<
+  SuggestionEntity,
+  | 'id'
+  | 'transaction_id'
+  | 'suggestion'
+  | 'source'
+  | 'source_id'
+  | 'confidence'
+  | 'group_id'
+  | 'status'
+  | 'created_at'
+>;
+
+export const suggestionModel = {
+  toExternal(suggestion: SuggestionEntity): APISuggestionEntity {
+    return {
+      id: suggestion.id,
+      transaction_id: suggestion.transaction_id,
+      suggestion: suggestion.suggestion,
+      source: suggestion.source,
+      source_id: suggestion.source_id ?? null,
+      confidence: suggestion.confidence ?? null,
+      group_id: suggestion.group_id ?? null,
+      status: suggestion.status,
+      created_at: suggestion.created_at,
+    };
   },
 };
 

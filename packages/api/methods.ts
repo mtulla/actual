@@ -5,6 +5,7 @@ import type {
   APIFileEntity,
   APIPayeeEntity,
   APIScheduleEntity,
+  APISuggestionEntity,
   APITagEntity,
 } from '@actual-app/core/server/api-models';
 import { lib } from '@actual-app/core/server/main';
@@ -357,4 +358,40 @@ export function getIDByName(
 
 export function getServerVersion() {
   return send('api/get-server-version');
+}
+
+export function getSuggestions(transactionId: string) {
+  return send('api/suggestions-get', { transactionId });
+}
+
+export function createSuggestion(
+  transactionId: APISuggestionEntity['transaction_id'],
+  suggestion: APISuggestionEntity['suggestion'],
+  source: APISuggestionEntity['source'],
+  {
+    sourceId,
+    confidence,
+    groupId,
+  }: {
+    sourceId?: string;
+    confidence?: number;
+    groupId?: string;
+  } = {},
+) {
+  return send('api/suggestion-create', {
+    transactionId,
+    suggestion,
+    source,
+    sourceId,
+    confidence,
+    groupId,
+  });
+}
+
+export function acceptSuggestion(id: APISuggestionEntity['id']) {
+  return send('api/suggestion-accept', { id });
+}
+
+export function dismissSuggestion(id: APISuggestionEntity['id']) {
+  return send('api/suggestion-dismiss', { id });
 }

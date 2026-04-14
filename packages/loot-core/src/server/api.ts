@@ -34,6 +34,7 @@ import {
   payeeModel,
   remoteFileModel,
   scheduleModel,
+  suggestionModel,
   tagModel,
 } from './api-models';
 import type { AmountOPType, APIScheduleEntity } from './api-models';
@@ -764,6 +765,43 @@ handlers['api/tag-update'] = withMutation(async function ({ id, fields }) {
 handlers['api/tag-delete'] = withMutation(async function ({ id }) {
   checkFileOpen();
   await handlers['tags-delete']({ id });
+});
+
+handlers['api/suggestions-get'] = async function ({ transactionId }) {
+  checkFileOpen();
+  const suggestions =
+    await handlers['suggestions-get-by-transaction'](transactionId);
+  return suggestions.map(s => suggestionModel.toExternal(s));
+};
+
+handlers['api/suggestion-create'] = withMutation(async function ({
+  transactionId,
+  suggestion,
+  source,
+  sourceId,
+  confidence,
+  groupId,
+}) {
+  checkFileOpen();
+  const result = await handlers['suggestion-create']({
+    transaction_id: transactionId,
+    suggestion,
+    source,
+    source_id: sourceId,
+    confidence,
+    group_id: groupId,
+  });
+  return suggestionModel.toExternal(result);
+});
+
+handlers['api/suggestion-accept'] = withMutation(async function ({ id }) {
+  checkFileOpen();
+  await handlers['suggestion-accept']({ id });
+});
+
+handlers['api/suggestion-dismiss'] = withMutation(async function ({ id }) {
+  checkFileOpen();
+  await handlers['suggestion-dismiss']({ id });
 });
 
 handlers['api/payee-location-create'] = withMutation(async function ({
