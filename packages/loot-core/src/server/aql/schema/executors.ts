@@ -13,8 +13,74 @@ import * as db from '#server/db';
 import { whereIn } from '#server/db/util';
 import { q } from '#shared/query';
 import type { QueryState } from '#shared/query';
-import type { CategoryEntity } from '#types/models';
+import type { CategoryEntity, SuggestionEntity } from '#types/models';
 import { aqlQuery } from '..';
+
+// Suggestions attachment
+
+async function attachSuggestions(
+  transactions: Record<string, unknown>[],
+): Promise<void> {
+  if (transactions.length === 0) return;
+
+  // Collect all transaction IDs (parents + subtransactions)
+  const ids: string[] = [];
+  for (const t of transactions) {
+    if (typeof t.id === 'string') {
+      ids.push(t.id);
+    }
+    if (Array.isArray(t.subtransactions)) {
+      for (const sub of t.subtransactions as Record<string, unknown>[]) {
+        if (typeof sub.id === 'string') {
+          ids.push(sub.id);
+        }
+      }
+    }
+  }
+
+  if (ids.length === 0) return;
+
+  const rows = await db.getSuggestionsByTransactionIds(ids);
+  if (rows.length === 0) return;
+
+  // Group by transaction_id
+  const byTxn = new Map<string, SuggestionEntity[]>();
+  for (const row of rows) {
+    const entity: SuggestionEntity = {
+      id: row.id,
+      transaction_id: row.transaction_id,
+      suggestion: JSON.parse(row.suggestion),
+      source: row.source,
+      source_id: row.source_id,
+      confidence: row.confidence,
+      group_id: row.group_id,
+      status: row.status,
+      created_at: row.created_at,
+    };
+    let list = byTxn.get(row.transaction_id);
+    if (!list) {
+      list = [];
+      byTxn.set(row.transaction_id, list);
+    }
+    list.push(entity);
+  }
+
+  // Attach to transactions and subtransactions
+  for (const t of transactions) {
+    const suggestions = byTxn.get(t.id as string);
+    if (suggestions) {
+      t.suggestions = suggestions;
+    }
+    if (Array.isArray(t.subtransactions)) {
+      for (const sub of t.subtransactions as Record<string, unknown>[]) {
+        const subSuggestions = byTxn.get(sub.id as string);
+        if (subSuggestions) {
+          sub.suggestions = subSuggestions;
+        }
+      }
+    }
+  }
+}
 
 // Transactions executor
 
@@ -222,7 +288,9 @@ async function execTransactionsGrouped(
     return trans;
   };
 
-  return toGroup(parents, children, mapper);
+  const result = toGroup(parents, children, mapper);
+  await attachSuggestions(result);
+  return result;
 }
 
 async function execTransactionsBasic(
@@ -243,7 +311,15 @@ async function execTransactionsBasic(
     }
   }
 
-  return execQuery(queryState, compilerState, s, params, outputTypes);
+  const result = await execQuery(
+    queryState,
+    compilerState,
+    s,
+    params,
+    outputTypes,
+  );
+  await attachSuggestions(result);
+  return result;
 }
 
 function isValidSplitsOption(splits: string): splits is SplitsOption {

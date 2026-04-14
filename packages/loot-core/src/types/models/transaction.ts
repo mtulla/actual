@@ -4,6 +4,7 @@ import type { AccountEntity } from './account';
 import type { CategoryEntity } from './category';
 import type { PayeeEntity } from './payee';
 import type { ScheduleEntity } from './schedule';
+import type { SuggestionEntity } from './suggestion';
 
 export type TransactionEntity = {
   id: string;
@@ -27,6 +28,7 @@ export type TransactionEntity = {
   forceUpcoming?: boolean;
   schedule?: ScheduleEntity['id'];
   subtransactions?: TransactionEntity[];
+  suggestions?: SuggestionEntity[];
   _unmatched?: boolean;
   _deleted?: boolean;
   error?: {
