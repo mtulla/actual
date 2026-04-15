@@ -343,7 +343,7 @@ export type DbTag = {
 
 export type DbSuggestion = {
   id: string;
-  transaction_id: DbTransaction['id'];
+  transaction_id?: DbTransaction['id'] | null;
   suggestion: JsonString;
   source: string;
   source_id?: string | null;

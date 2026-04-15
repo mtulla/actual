@@ -291,8 +291,12 @@ export type ApiHandlers = {
     transactionId: string;
   }) => Promise<APISuggestionEntity[]>;
 
+  'api/suggestions-get-new': (arg: {
+    accountId?: string;
+  }) => Promise<APISuggestionEntity[]>;
+
   'api/suggestion-create': (arg: {
-    transactionId: string;
+    transactionId?: string | null;
     suggestion: Record<string, unknown>;
     source: string;
     sourceId?: string;

@@ -1,6 +1,6 @@
 export type SuggestionEntity = {
   id: string;
-  transaction_id: string;
+  transaction_id?: string | null;
   suggestion: Record<string, unknown>;
   source: string;
   source_id?: string | null;

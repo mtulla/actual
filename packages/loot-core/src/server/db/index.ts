@@ -1059,3 +1059,25 @@ export function updateSuggestion(
 ) {
   return update('suggestions', suggestion);
 }
+
+export function getNewTransactionSuggestions(accountId: string) {
+  return all<DbSuggestion>(
+    `
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE tombstone = 0 AND status = 'pending' AND transaction_id IS NULL
+      AND json_extract(suggestion, '$.account') = ?
+    ORDER BY created_at
+  `,
+    [accountId],
+  );
+}
+
+export function getAllNewTransactionSuggestions() {
+  return all<DbSuggestion>(`
+    SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
+    FROM suggestions
+    WHERE tombstone = 0 AND status = 'pending' AND transaction_id IS NULL
+    ORDER BY created_at
+  `);
+}

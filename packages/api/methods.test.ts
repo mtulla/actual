@@ -1239,4 +1239,85 @@ describe('Suggestions CRUD', () => {
       ]),
     );
   });
+
+  test('create new-transaction suggestion and accept it', async () => {
+    // Create a new-transaction suggestion (no transactionId)
+    const suggestion = await api.createSuggestion(
+      null,
+      {
+        account: accountId,
+        date: '2024-02-01',
+        amount: -7500,
+        payee: (await api.getPayees())[0]?.id,
+        category: categoryId,
+        notes: 'Suggested lunch expense',
+      },
+      'llm',
+      { confidence: 0.85 },
+    );
+
+    expect(suggestion).toEqual(
+      expect.objectContaining({
+        id: expect.any(String),
+        transaction_id: null,
+        suggestion: expect.objectContaining({
+          account: accountId,
+          date: '2024-02-01',
+          amount: -7500,
+        }),
+        status: 'pending',
+      }),
+    );
+
+    // Fetch new-transaction suggestions
+    const newSuggestions = await api.getNewTransactionSuggestions(accountId);
+    expect(newSuggestions).toHaveLength(1);
+    expect(newSuggestions[0].id).toBe(suggestion.id);
+
+    // Accept it — should create the transaction
+    await api.acceptSuggestion(suggestion.id);
+
+    // Verify the transaction was created
+    const transactions = await api.getTransactions(
+      accountId,
+      '2024-02-01',
+      '2024-02-28',
+    );
+    expect(transactions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          date: '2024-02-01',
+          amount: -7500,
+          notes: 'Suggested lunch expense',
+        }),
+      ]),
+    );
+
+    // Verify suggestion is no longer pending
+    const remaining = await api.getNewTransactionSuggestions(accountId);
+    expect(remaining).toHaveLength(0);
+  });
+
+  test('dismiss new-transaction suggestion does not create transaction', async () => {
+    const suggestion = await api.createSuggestion(
+      null,
+      {
+        account: accountId,
+        date: '2024-03-01',
+        amount: -3000,
+        notes: 'Should not be created',
+      },
+      'llm',
+    );
+
+    await api.dismissSuggestion(suggestion.id);
+
+    // Verify no transaction was created
+    const transactions = await api.getTransactions(
+      accountId,
+      '2024-03-01',
+      '2024-03-31',
+    );
+    expect(transactions).toHaveLength(0);
+  });
 });

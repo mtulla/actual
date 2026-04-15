@@ -774,6 +774,12 @@ handlers['api/suggestions-get'] = async function ({ transactionId }) {
   return suggestions.map(s => suggestionModel.toExternal(s));
 };
 
+handlers['api/suggestions-get-new'] = async function ({ accountId }) {
+  checkFileOpen();
+  const suggestions = await handlers['suggestions-get-new']({ accountId });
+  return suggestions.map(s => suggestionModel.toExternal(s));
+};
+
 handlers['api/suggestion-create'] = withMutation(async function ({
   transactionId,
   suggestion,
@@ -784,7 +790,7 @@ handlers['api/suggestion-create'] = withMutation(async function ({
 }) {
   checkFileOpen();
   const result = await handlers['suggestion-create']({
-    transaction_id: transactionId,
+    transaction_id: transactionId ?? null,
     suggestion,
     source,
     source_id: sourceId,

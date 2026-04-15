@@ -73,6 +73,7 @@ import type {
   PayeeEntity,
   RuleEntity,
   ScheduleEntity,
+  SuggestionEntity,
   TransactionEntity,
 } from '@actual-app/core/types/models';
 import { format as formatDate, parseISO } from 'date-fns';
@@ -2215,6 +2216,8 @@ type TransactionTableInnerProps = {
   newTransactions: TransactionEntity[];
 
   transactions: TransactionEntity[];
+  newTransactionSuggestions?: SuggestionEntity[];
+  onRefetch?: () => void;
   loadMoreTransactions: () => void;
   accounts: AccountEntity[];
   categoryGroups: CategoryGroupEntity[];
@@ -2299,6 +2302,10 @@ function TransactionTableInner({
   const [dismissedSuggestions, setDismissedSuggestions] = useState(
     new Set<string>(),
   );
+  const newTxnSuggestions = useMemo(
+    () => props.newTransactionSuggestions ?? [],
+    [props.newTransactionSuggestions],
+  );
 
   function saveScrollWidth(parent: number, child: number) {
     const width = parent > 0 && child > 0 && parent - child;
@@ -2354,6 +2361,29 @@ function TransactionTableInner({
     if (!suggestionsEnabled) return filtered;
 
     const result: TransactionEntity[] = [];
+
+    // Inject new-transaction suggestions at the top
+    for (const s of newTxnSuggestions) {
+      if (dismissedSuggestions.has(s.id)) continue;
+      result.push({
+        id: `suggestion-new-values-${s.id}`,
+        account: String(s.suggestion.account ?? ''),
+        amount: 0,
+        date: String(s.suggestion.date ?? ''),
+        _suggestionType: 'new-values',
+        _suggestion: s,
+      } as unknown as TransactionEntity);
+      result.push({
+        id: `suggestion-new-buttons-${s.id}`,
+        account: String(s.suggestion.account ?? ''),
+        amount: 0,
+        date: String(s.suggestion.date ?? ''),
+        _suggestionType: 'new-buttons',
+        _suggestion: s,
+      } as unknown as TransactionEntity);
+    }
+
+    // Inject field-change suggestions after their parent transactions
     for (const t of filtered) {
       result.push(t);
       if (
@@ -2385,6 +2415,7 @@ function TransactionTableInner({
     props.showReconciled,
     suggestionsEnabled,
     dismissedSuggestions,
+    newTxnSuggestions,
   ]);
 
   const renderRow: TableProps<TransactionEntity>['renderItem'] = ({
@@ -2468,6 +2499,76 @@ function TransactionTableInner({
     const suggestionType = (trans as unknown as { _suggestionType?: string })
       ._suggestionType;
     if (suggestionType) {
+      // New-transaction suggestions (no parent transaction)
+      if (suggestionType === 'new-values' || suggestionType === 'new-buttons') {
+        const suggestion = (
+          trans as unknown as {
+            _suggestion: SuggestionEntity;
+          }
+        )._suggestion;
+
+        const dismissNewSuggestion = () => {
+          setDismissedSuggestions(prev => new Set([...prev, suggestion.id]));
+          void send('suggestion-dismiss', { id: suggestion.id });
+        };
+
+        if (suggestionType === 'new-values') {
+          return (
+            <SuggestionRow
+              suggestion={suggestion}
+              parentAmount={Number(suggestion.suggestion.amount ?? 0)}
+              isNewTransaction
+              categoryGroups={categoryGroups}
+              payees={payees}
+              accounts={accounts}
+              showAccount={showAccount}
+              showCleared={showCleared}
+              showBalance={showBalances}
+            />
+          );
+        }
+
+        if (suggestionType === 'new-buttons') {
+          return (
+            <Row
+              style={{
+                backgroundColor: theme.tableRowBackgroundHover,
+                height: ROW_HEIGHT,
+              }}
+            >
+              <View
+                style={{
+                  flex: 1,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  paddingRight: 10,
+                  gap: 10,
+                }}
+              >
+                <Button variant="normal" onPress={dismissNewSuggestion}>
+                  <Trans>Dismiss</Trans>
+                </Button>
+                <Button
+                  variant="primary"
+                  style={{ padding: '4px 10px' }}
+                  onPress={async () => {
+                    await send('suggestion-accept', {
+                      id: suggestion.id,
+                    });
+                    dismissNewSuggestion();
+                    props.onRefetch?.();
+                  }}
+                >
+                  <Trans>Accept Suggestion</Trans>
+                </Button>
+              </View>
+            </Row>
+          );
+        }
+      }
+
+      // Field-change suggestions (attached to existing transaction)
       const parentTrans = (
         trans as unknown as { _parentTransaction: TransactionEntity }
       )._parentTransaction;
@@ -2717,6 +2818,8 @@ type TableState = {
 
 export type TransactionTableProps = {
   transactions: readonly TransactionEntity[];
+  newTransactionSuggestions?: SuggestionEntity[];
+  onRefetch?: () => void;
   loadMoreTransactions: () => void;
   accounts: AccountEntity[];
   categoryGroups: CategoryGroupEntity[];

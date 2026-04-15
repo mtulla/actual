@@ -364,6 +364,10 @@ export function getSuggestions(transactionId: string) {
   return send('api/suggestions-get', { transactionId });
 }
 
+export function getNewTransactionSuggestions(accountId?: string) {
+  return send('api/suggestions-get-new', { accountId });
+}
+
 export function createSuggestion(
   transactionId: APISuggestionEntity['transaction_id'],
   suggestion: APISuggestionEntity['suggestion'],

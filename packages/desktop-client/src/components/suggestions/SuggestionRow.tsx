@@ -1,22 +1,22 @@
-import {
-  SvgLeftArrow2,
-  SvgRightArrow2,
-} from '@actual-app/components/icons/v0';
+import { SvgLeftArrow2, SvgRightArrow2 } from '@actual-app/components/icons/v0';
 import { Text } from '@actual-app/components/text';
 import { theme } from '@actual-app/components/theme';
 import { View } from '@actual-app/components/view';
+import { integerToCurrency } from '@actual-app/core/shared/util';
 import type {
   AccountEntity,
   CategoryGroupEntity,
   PayeeEntity,
   SuggestionEntity,
 } from '@actual-app/core/types/models';
+import { format as formatDate, parseISO } from 'date-fns';
 
 import { Cell, Field, Row, ROW_HEIGHT } from '#components/table';
 
 type SuggestionRowProps = {
   suggestion: SuggestionEntity;
   parentAmount: number;
+  isNewTransaction?: boolean;
   categoryGroups: CategoryGroupEntity[];
   payees: PayeeEntity[];
   accounts: AccountEntity[];
@@ -28,6 +28,7 @@ type SuggestionRowProps = {
 export function SuggestionRow({
   suggestion,
   parentAmount,
+  isNewTransaction = false,
   categoryGroups,
   payees,
   accounts,
@@ -59,6 +60,11 @@ export function SuggestionRow({
     return '';
   }
 
+  function resolveAccountName(id: unknown): string {
+    if (typeof id !== 'string') return '';
+    return accounts.find(a => a.id === id)?.name ?? '';
+  }
+
   const suggestionBg = `color-mix(in srgb, ${theme.buttonPrimaryBackground} 10%, ${theme.tableBackground})`;
   const cellStyle = { borderColor: 'transparent' };
   const valueStyle = { color: theme.pageTextSubdued };
@@ -72,26 +78,65 @@ export function SuggestionRow({
       }}
     >
       {/* Select placeholder */}
-      <Cell width={20} style={cellStyle} />
-      {/* Date placeholder - matches child transaction blank area */}
-      <Field
-        width={110}
+      <Cell
+        width={20}
         style={{
-          width: 110,
-          backgroundColor: theme.tableRowBackgroundHover,
-          border: 0,
+          ...cellStyle,
+          backgroundColor: isNewTransaction
+            ? suggestionBg
+            : theme.tableRowBackgroundHover,
         }}
       />
-      {/* Account placeholder */}
-      {showAccount && (
-        <Field
-          style={{
-            flex: 1,
-            backgroundColor: theme.tableRowBackgroundHover,
-            border: 0,
-          }}
-        />
+
+      {isNewTransaction ? (
+        <>
+          {/* Date — show suggested date */}
+          <Cell
+            width={110}
+            style={cellStyle}
+            value={
+              'date' in fields && typeof fields.date === 'string'
+                ? formatDate(parseISO(fields.date), 'MM/dd/yyyy')
+                : ''
+            }
+            valueStyle={valueStyle}
+          />
+          {/* Account — show suggested account name */}
+          {showAccount && (
+            <Cell
+              width="flex"
+              style={cellStyle}
+              value={
+                'account' in fields ? resolveAccountName(fields.account) : ''
+              }
+              valueStyle={valueStyle}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          {/* Date placeholder - matches child transaction blank area */}
+          <Field
+            width={110}
+            style={{
+              width: 110,
+              backgroundColor: theme.tableRowBackgroundHover,
+              border: 0,
+            }}
+          />
+          {/* Account placeholder */}
+          {showAccount && (
+            <Field
+              style={{
+                flex: 1,
+                backgroundColor: theme.tableRowBackgroundHover,
+                border: 0,
+              }}
+            />
+          )}
+        </>
       )}
+
       {/* Payee */}
       {(() => {
         if (!('payee' in fields)) {
@@ -109,8 +154,8 @@ export function SuggestionRow({
                 ...valueStyle,
               }}
             >
-              {isTransfer && (
-                parentAmount > 0 ? (
+              {isTransfer &&
+                (parentAmount > 0 ? (
                   <SvgLeftArrow2
                     style={{ width: 10, height: 10, marginRight: 5 }}
                   />
@@ -118,8 +163,7 @@ export function SuggestionRow({
                   <SvgRightArrow2
                     style={{ width: 10, height: 10, marginRight: 5 }}
                   />
-                )
-              )}
+                ))}
               <Text
                 style={{
                   whiteSpace: 'nowrap',
@@ -133,6 +177,7 @@ export function SuggestionRow({
           </Cell>
         );
       })()}
+
       {/* Notes */}
       <Cell
         width="flex"
@@ -140,6 +185,7 @@ export function SuggestionRow({
         value={'notes' in fields ? String(fields.notes) : ''}
         valueStyle={'notes' in fields ? valueStyle : undefined}
       />
+
       {/* Category */}
       <Cell
         width="flex"
@@ -147,32 +193,36 @@ export function SuggestionRow({
         value={'category' in fields ? resolveCategoryName(fields.category) : ''}
         valueStyle={'category' in fields ? valueStyle : undefined}
       />
+
       {/* Debit/Payment */}
       <Cell
         width={100}
         style={cellStyle}
         value={
           'amount' in fields && Number(fields.amount) < 0
-            ? String(-Number(fields.amount))
+            ? integerToCurrency(-Number(fields.amount))
             : ''
         }
         valueStyle={valueStyle}
         textAlign="right"
       />
+
       {/* Credit/Deposit */}
       <Cell
         width={100}
         style={cellStyle}
         value={
           'amount' in fields && Number(fields.amount) > 0
-            ? String(fields.amount)
+            ? integerToCurrency(Number(fields.amount))
             : ''
         }
         valueStyle={valueStyle}
         textAlign="right"
       />
+
       {/* Cleared */}
       {showCleared && <Cell width={38} style={cellStyle} />}
+
       {/* Balance */}
       {showBalance && <Cell width={103} style={cellStyle} />}
     </Row>

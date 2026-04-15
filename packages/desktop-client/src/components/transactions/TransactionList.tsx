@@ -1,6 +1,12 @@
 // @ts-strict-ignore
 // TODO: remove strict
-import { useCallback, useLayoutEffect, useRef } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -25,6 +31,7 @@ import type {
   RuleActionEntity,
   RuleConditionEntity,
   ScheduleEntity,
+  SuggestionEntity,
   TransactionEntity,
   TransactionFilterEntity,
 } from '@actual-app/core/types/models';
@@ -32,6 +39,7 @@ import type {
 import type { TableHandleRef } from '#components/table';
 import { isValidBoundaryDrop } from '#hooks/useDragDrop';
 import type { DropPosition } from '#hooks/useDragDrop';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useNavigate } from '#hooks/useNavigate';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 import { pushModal } from '#modals/modalsSlice';
@@ -333,6 +341,22 @@ export function TransactionList({
   const [upcomingLength = '7'] = useSyncedPref(
     'upcomingScheduledTransactionLength',
   );
+
+  // Fetch new-transaction suggestions for the current account
+  const suggestionsEnabled = useFeatureFlag('suggestions');
+  const [newTransactionSuggestions, setNewTransactionSuggestions] = useState<
+    SuggestionEntity[]
+  >([]);
+  const accountId = account?.id;
+  useEffect(() => {
+    if (!suggestionsEnabled) {
+      setNewTransactionSuggestions([]);
+      return;
+    }
+    void send('suggestions-get-new', { accountId }).then(result => {
+      setNewTransactionSuggestions(result ?? []);
+    });
+  }, [suggestionsEnabled, accountId, allTransactions]);
 
   const transactionsLatest = useRef<readonly TransactionEntity[]>([]);
   useLayoutEffect(() => {
@@ -725,6 +749,8 @@ export function TransactionList({
     <TransactionTable
       ref={tableRef}
       transactions={allTransactions}
+      newTransactionSuggestions={newTransactionSuggestions}
+      onRefetch={onRefetch}
       loadMoreTransactions={loadMoreTransactions}
       accounts={accounts}
       categoryGroups={categoryGroups}

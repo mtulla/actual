@@ -8,6 +8,7 @@ import type { SuggestionEntity } from '#types/models';
 export type SuggestionsHandlers = {
   'suggestions-get': typeof getSuggestions;
   'suggestions-get-by-transaction': typeof getSuggestionsByTransaction;
+  'suggestions-get-new': typeof getNewTransactionSuggestions;
   'suggestion-create': typeof createSuggestion;
   'suggestion-accept': typeof acceptSuggestion;
   'suggestion-dismiss': typeof dismissSuggestion;
@@ -17,6 +18,7 @@ export type SuggestionsHandlers = {
 export const app = createApp<SuggestionsHandlers>();
 app.method('suggestions-get', getSuggestions);
 app.method('suggestions-get-by-transaction', getSuggestionsByTransaction);
+app.method('suggestions-get-new', getNewTransactionSuggestions);
 app.method('suggestion-create', mutator(createSuggestion));
 app.method('suggestion-accept', mutator(acceptSuggestion));
 app.method('suggestion-dismiss', mutator(dismissSuggestion));
@@ -48,8 +50,19 @@ async function getSuggestionsByTransaction(
   return rows.map(toEntity);
 }
 
+async function getNewTransactionSuggestions({
+  accountId,
+}: {
+  accountId?: string;
+}): Promise<SuggestionEntity[]> {
+  const rows = accountId
+    ? await db.getNewTransactionSuggestions(accountId)
+    : await db.getAllNewTransactionSuggestions();
+  return rows.map(toEntity);
+}
+
 async function createSuggestion({
-  transaction_id,
+  transaction_id = null,
   suggestion,
   source,
   source_id = null,
@@ -59,6 +72,15 @@ async function createSuggestion({
   SuggestionEntity,
   'id' | 'status' | 'created_at'
 >): Promise<SuggestionEntity> {
+  // Validate new-transaction suggestions have required fields
+  if (!transaction_id) {
+    if (!suggestion.account || !suggestion.date || suggestion.amount == null) {
+      throw new Error(
+        'New-transaction suggestions must include account, date, and amount',
+      );
+    }
+  }
+
   const created_at = new Date().toISOString();
   const id = await db.insertSuggestion({
     transaction_id,
@@ -93,13 +115,18 @@ async function acceptSuggestion({
 
   const fields = JSON.parse(row.suggestion);
 
-  // Use batchUpdateTransactions which properly handles
-  // category_mapping, transfers, and other side effects
-  await batchUpdateTransactions({
-    updated: [{ id: row.transaction_id, ...fields }],
-  });
+  if (row.transaction_id) {
+    // Field-change suggestion: update existing transaction
+    await batchUpdateTransactions({
+      updated: [{ id: row.transaction_id, ...fields }],
+    });
+  } else {
+    // New-transaction suggestion: create the transaction
+    await batchUpdateTransactions({
+      added: [fields],
+    });
+  }
 
-  // Mark suggestion as accepted
   await db.updateSuggestion({ id, status: 'accepted' });
 }
 

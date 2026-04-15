@@ -36,6 +36,9 @@ async function main() {
   console.log(`Loading: ${budget.name}`);
   await api.downloadBudget(syncId);
 
+  // Unique suffix so each run creates fresh transactions
+  const run = Date.now();
+
   // Get accounts
   const accounts = await api.getAccounts();
   console.log(
@@ -94,12 +97,12 @@ async function main() {
     {
       date: '2026-04-14',
       amount: -4500,
-      imported_id: 'qa-case-a',
+      imported_id: `qa-case-a-${run}`,
       payee: groceryPayeeId,
     },
   ]);
   let txns = await api.getTransactions(checkingsId, '2026-04-14', '2026-04-14');
-  const caseATxn = txns.find(t => t.imported_id === 'qa-case-a');
+  const caseATxn = txns.find(t => t.imported_id === `qa-case-a-${run}`);
   console.log(`  Transaction: ${caseATxn.id} (no category)`);
 
   await api.createSuggestion(caseATxn.id, { category: foodCatId }, 'llm', {
@@ -116,26 +119,37 @@ async function main() {
     {
       date: '2026-04-13',
       amount: -12000,
-      imported_id: 'qa-case-b',
+      imported_id: `qa-case-b-${run}`,
       payee: groceryPayeeId,
       category: generalCatId,
       notes: 'weekly shopping',
     },
   ]);
   txns = await api.getTransactions(checkingsId, '2026-04-13', '2026-04-13');
-  const caseBTxn = txns.find(t => t.imported_id === 'qa-case-b');
+  const caseBTxn = txns.find(t => t.imported_id === `qa-case-b-${run}`);
   console.log(
     `  Transaction: ${caseBTxn.id} (category=General, notes="weekly shopping")`,
   );
 
+  let traderJoesPayeeId = (await api.getPayees()).find(
+    p => p.name === "Trader Joe's",
+  )?.id;
+  if (!traderJoesPayeeId) {
+    traderJoesPayeeId = await api.createPayee({ name: "Trader Joe's" });
+  }
+
   await api.createSuggestion(
     caseBTxn.id,
-    { category: foodCatId, notes: 'Groceries - weekly run' },
+    {
+      payee: traderJoesPayeeId,
+      category: foodCatId,
+      notes: 'Groceries - weekly run',
+    },
     'llm',
     { confidence: 0.88, sourceId: 'gpt-4' },
   );
   console.log(
-    `  Suggestion: category → Food, notes → "Groceries - weekly run"`,
+    `  Suggestion: payee → Trader Joe's, category → Food, notes → "Groceries - weekly run"`,
   );
 
   // ============================================================
@@ -159,7 +173,7 @@ async function main() {
     {
       date: '2026-04-12',
       amount: -50000,
-      imported_id: 'qa-case-c-from',
+      imported_id: `qa-case-c-from-${run}`,
       notes: 'Transfer to savings',
     },
   ]);
@@ -167,16 +181,16 @@ async function main() {
     {
       date: '2026-04-12',
       amount: 50000,
-      imported_id: 'qa-case-c-to',
+      imported_id: `qa-case-c-to-${run}`,
       notes: 'Transfer from checking',
     },
   ]);
 
   txns = await api.getTransactions(checkingsId, '2026-04-12', '2026-04-12');
-  const caseCFromTxn = txns.find(t => t.imported_id === 'qa-case-c-from');
+  const caseCFromTxn = txns.find(t => t.imported_id === `qa-case-c-from-${run}`);
 
   txns = await api.getTransactions(savingsId, '2026-04-12', '2026-04-12');
-  const caseCToTxn = txns.find(t => t.imported_id === 'qa-case-c-to');
+  const caseCToTxn = txns.find(t => t.imported_id === `qa-case-c-to-${run}`);
 
   console.log(`  Checkings txn: ${caseCFromTxn.id} (-500.00)`);
   console.log(`  Savings txn: ${caseCToTxn.id} (+500.00)`);
@@ -212,7 +226,7 @@ async function main() {
     {
       date: '2026-04-15',
       amount: -8000,
-      imported_id: 'qa-case-d-parent',
+      imported_id: `qa-case-d-parent-${run}`,
       payee_name: 'Target',
       subtransactions: [
         {
@@ -237,8 +251,11 @@ async function main() {
     );
   }
   // Also check subtransactions on grouped results
-  const splitParent = txns.find(t => t.is_parent || t.subtransactions?.length > 0);
-  const splitChildren = splitParent?.subtransactions ?? txns.filter(t => t.is_child);
+  const splitParent = txns.find(
+    t => t.is_parent || t.subtransactions?.length > 0,
+  );
+  const splitChildren =
+    splitParent?.subtransactions ?? txns.filter(t => t.is_child);
 
   console.log(`  Found ${splitChildren.length} child transactions`);
 
@@ -264,15 +281,13 @@ async function main() {
   // ============================================================
   // Case E: Split transaction with suggestion on parent AND children
   // ============================================================
-  console.log(
-    '\n--- Case E: Split with suggestions on parent + children ---',
-  );
+  console.log('\n--- Case E: Split with suggestions on parent + children ---');
 
   const splitResult2 = await api.importTransactions(checkingsId, [
     {
       date: '2026-04-16',
       amount: -15000,
-      imported_id: 'qa-case-e-parent',
+      imported_id: `qa-case-e-parent-${run}`,
       payee_name: 'Costco',
       subtransactions: [
         {
@@ -295,9 +310,7 @@ async function main() {
   const splitChildren2 =
     splitParent2?.subtransactions ?? txns.filter(t => t.is_child);
 
-  console.log(
-    `  Parent: ${splitParent2?.id} amount=${splitParent2?.amount}`,
-  );
+  console.log(`  Parent: ${splitParent2?.id} amount=${splitParent2?.amount}`);
   console.log(`  Found ${splitChildren2.length} child transactions`);
 
   // Suggestion on the parent: change payee
@@ -336,6 +349,48 @@ async function main() {
     );
     console.log(`  Suggestion on child 2: category → General`);
   }
+
+  // ============================================================
+  // Case F: New-transaction suggestions (no existing transaction)
+  // ============================================================
+  console.log('\n--- Case F: New-transaction suggestions ---');
+
+  let starbucksPayeeId = (await api.getPayees()).find(
+    p => p.name === 'Starbucks',
+  )?.id;
+  if (!starbucksPayeeId) {
+    starbucksPayeeId = await api.createPayee({ name: 'Starbucks' });
+  }
+
+  // Suggest a new transaction on Checkings
+  await api.createSuggestion(
+    null,
+    {
+      account: checkingsId,
+      date: '2026-04-17',
+      amount: -650,
+      payee: starbucksPayeeId,
+      category: foodCatId,
+      notes: 'Morning coffee',
+    },
+    'llm',
+    { confidence: 0.78, sourceId: 'gpt-4' },
+  );
+  console.log('  Suggestion: new transaction on Checkings - Starbucks $6.50');
+
+  // Suggest another new transaction on Savings
+  await api.createSuggestion(
+    null,
+    {
+      account: savingsId,
+      date: '2026-04-17',
+      amount: 100000,
+      notes: 'Monthly savings deposit',
+    },
+    'llm',
+    { confidence: 0.92, sourceId: 'gpt-4' },
+  );
+  console.log('  Suggestion: new transaction on Savings - deposit $1000.00');
 
   // ============================================================
   await api.sync();

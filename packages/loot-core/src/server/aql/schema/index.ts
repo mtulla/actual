@@ -208,7 +208,7 @@ export const schema = {
   },
   suggestions: {
     id: f('id'),
-    transaction_id: f('id', { ref: 'transactions', required: true }),
+    transaction_id: f('id', { ref: 'transactions' }),
     suggestion: f('json', { required: true }),
     source: f('string', { required: true }),
     source_id: f('string'),
