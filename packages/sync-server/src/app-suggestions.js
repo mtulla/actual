@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import express from 'express';
 
 import { errorMiddleware, requestLoggerMiddleware } from './util/middlewares';
@@ -8,27 +10,20 @@ app.use(express.json());
 app.use(errorMiddleware);
 app.use(requestLoggerMiddleware);
 
-// Initialize dd-trace with LLM Observability in-code (not via --require)
-let llmobs = null;
-let tracer = null;
-try {
-  const ddTrace = await import('dd-trace');
-  tracer = ddTrace.default;
+const DD_API_KEY = process.env.DD_API_KEY;
+const DD_APP_KEY = process.env.DD_APP_KEY;
+const DD_SITE = process.env.DD_SITE ?? 'datadoghq.com';
+const DD_LLMOBS_ML_APP = process.env.DD_LLMOBS_ML_APP ?? 'actual-ai';
+const DD_ENV = process.env.DD_ENV ?? 'dev';
+const OBSERVABILITY_ENABLED =
+  !!DD_API_KEY && process.env.DD_LLMOBS_ENABLED === '1';
 
-  if (process.env.DD_API_KEY && process.env.DD_LLMOBS_ENABLED === '1') {
-    tracer.init({
-      llmobs: {
-        mlApp: process.env.DD_LLMOBS_ML_APP ?? 'actual-ai',
-        agentlessEnabled: true,
-      },
-      site: process.env.DD_SITE ?? 'datadoghq.com',
-      env: process.env.DD_ENV ?? 'dev',
-    });
-    llmobs = tracer.llmobs;
-    console.log('Datadog LLM Observability initialized for suggestions');
-  }
-} catch (err) {
-  console.error('Failed to initialize dd-trace LLM Observability:', err);
+if (OBSERVABILITY_ENABLED) {
+  console.log('Datadog LLM Observability enabled for suggestions');
+} else {
+  console.log(
+    'Datadog LLM Observability disabled (set DD_API_KEY and DD_LLMOBS_ENABLED=1)',
+  );
 }
 
 /**
@@ -36,7 +31,7 @@ try {
  *
  * Called by the client when a user accepts or dismisses a suggestion.
  * Emits a Datadog LLM Observability Task span linked to the original
- * trace that created the suggestion.
+ * trace that created the suggestion via the HTTP intake API.
  */
 app.post('/outcome', async (req, res) => {
   const session = validateSession(req, res);
@@ -68,7 +63,7 @@ app.post('/outcome', async (req, res) => {
     return;
   }
 
-  if (!llmobs) {
+  if (!OBSERVABILITY_ENABLED) {
     res.json({ status: 'ok', observability: 'unavailable' });
     return;
   }
@@ -76,41 +71,76 @@ app.post('/outcome', async (req, res) => {
   try {
     const traceContext = await findTraceContext(suggestion_id);
 
-    const spanOptions = {
-      kind: 'task',
+    const nowNs = BigInt(Date.now()) * 1_000_000n;
+    const spanId = randomUUID().replace(/-/g, '').slice(0, 16);
+
+    const span = {
+      span_id: spanId,
+      trace_id: traceContext?.traceId ?? randomUUID().replace(/-/g, ''),
+      parent_id: traceContext?.spanId ?? 'undefined',
       name: 'suggestion_outcome',
-    };
-
-    if (traceContext) {
-      // Build a parent SpanContext from the trace/span IDs so the new
-      // span lands on the same trace as the original suggestion generation.
-      const parentContext = tracer.extract('text_map', {
-        'x-datadog-trace-id': hexToDecimal(
-          traceContext.traceId.slice(-16),
-        ),
-        'x-datadog-parent-id': hexToDecimal(traceContext.spanId),
-        'x-datadog-tags': `_dd.p.tid=${traceContext.traceId.slice(0, -16)}`,
-      });
-      spanOptions.childOf = parentContext;
-    }
-
-    const emitSpan = () => {
-      llmobs.annotate({
-        inputData: transaction_before ?? { new_transaction: true },
-        outputData: { suggestion, outcome },
+      start_ns: Number(nowNs),
+      duration: 1,
+      status: 'ok',
+      meta: {
+        kind: 'task',
+        input: {
+          value: JSON.stringify(
+            transaction_before ?? { new_transaction: true },
+          ),
+        },
+        output: {
+          value: JSON.stringify({ suggestion, outcome }),
+        },
         metadata: {
           transaction_id: transaction_id ?? 'new',
           suggestion_id,
         },
-        tags: {
-          suggestion_outcome: outcome,
-        },
-      });
+      },
+      tags: [
+        `suggestion_outcome:${outcome}`,
+        `env:${DD_ENV}`,
+      ],
     };
 
-    const wrappedFn = llmobs.wrap(spanOptions, emitSpan);
-    wrappedFn();
+    console.log(
+      'Emitting suggestion outcome span:',
+      JSON.stringify(span, null, 2),
+    );
 
+    const intakeResponse = await fetch(
+      `https://api.${DD_SITE}/api/intake/llm-obs/v1/trace/spans`,
+      {
+        method: 'POST',
+        headers: {
+          'DD-API-KEY': DD_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          data: {
+            type: 'span',
+            attributes: {
+              ml_app: DD_LLMOBS_ML_APP,
+              tags: [`env:${DD_ENV}`],
+              spans: [span],
+            },
+          },
+        }),
+      },
+    );
+
+    if (!intakeResponse.ok) {
+      const body = await intakeResponse.text();
+      console.error(
+        'Span intake API returned',
+        intakeResponse.status,
+        body,
+      );
+      res.json({ status: 'ok', observability: 'error' });
+      return;
+    }
+
+    console.log('Span intake API accepted');
     res.json({ status: 'ok', observability: 'emitted' });
   } catch (err) {
     console.error('Error emitting suggestion outcome span:', err);
@@ -119,23 +149,11 @@ app.post('/outcome', async (req, res) => {
 });
 
 /**
- * Convert a hex string to a decimal string.
- * Uses BigInt to handle 64-bit values that exceed Number.MAX_SAFE_INTEGER.
- */
-function hexToDecimal(hex) {
-  return BigInt('0x' + hex).toString();
-}
-
-/**
  * Look up the trace_id and span_id for a suggestion by querying the
  * Datadog LLM Observability Search Spans API.
  */
 async function findTraceContext(suggestionId) {
-  const apiKey = process.env.DD_API_KEY;
-  const appKey = process.env.DD_APP_KEY;
-  const site = process.env.DD_SITE ?? 'datadoghq.com';
-
-  if (!apiKey || !appKey) {
+  if (!DD_API_KEY || !DD_APP_KEY) {
     console.log('findTraceContext: missing DD_API_KEY or DD_APP_KEY');
     return null;
   }
@@ -143,12 +161,12 @@ async function findTraceContext(suggestionId) {
   try {
     const query = `@meta.metadata.suggestion_id:${suggestionId}`;
     const response = await fetch(
-      `https://api.${site}/api/v2/llm-obs/v1/spans/events/search`,
+      `https://api.${DD_SITE}/api/v2/llm-obs/v1/spans/events/search`,
       {
         method: 'POST',
         headers: {
-          'DD-API-KEY': apiKey,
-          'DD-APPLICATION-KEY': appKey,
+          'DD-API-KEY': DD_API_KEY,
+          'DD-APPLICATION-KEY': DD_APP_KEY,
           'Content-Type': 'application/vnd.api+json',
         },
         body: JSON.stringify({
@@ -178,6 +196,10 @@ async function findTraceContext(suggestionId) {
     }
 
     const result = await response.json();
+    console.log(
+      'findTraceContext: search API response',
+      JSON.stringify(result, null, 2),
+    );
     const span = result.data?.[0]?.attributes;
     if (!span?.trace_id || !span?.span_id) {
       console.log(
