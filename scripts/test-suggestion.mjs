@@ -187,7 +187,9 @@ async function main() {
   ]);
 
   txns = await api.getTransactions(checkingsId, '2026-04-12', '2026-04-12');
-  const caseCFromTxn = txns.find(t => t.imported_id === `qa-case-c-from-${run}`);
+  const caseCFromTxn = txns.find(
+    t => t.imported_id === `qa-case-c-from-${run}`,
+  );
 
   txns = await api.getTransactions(savingsId, '2026-04-12', '2026-04-12');
   const caseCToTxn = txns.find(t => t.imported_id === `qa-case-c-to-${run}`);
