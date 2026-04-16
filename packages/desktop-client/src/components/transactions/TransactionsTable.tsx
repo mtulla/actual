@@ -2386,9 +2386,12 @@ function TransactionTableInner({
     // Inject field-change suggestions after their parent transactions
     for (const t of filtered) {
       result.push(t);
+      const pendingSuggestions = t.suggestions?.filter(
+        s => s.status === 'pending',
+      );
       if (
-        t.suggestions &&
-        t.suggestions.length > 0 &&
+        pendingSuggestions &&
+        pendingSuggestions.length > 0 &&
         !dismissedSuggestions.has(t.id)
       ) {
         result.push({
@@ -2572,7 +2575,9 @@ function TransactionTableInner({
       const parentTrans = (
         trans as unknown as { _parentTransaction: TransactionEntity }
       )._parentTransaction;
-      const suggestion = parentTrans.suggestions![0];
+      const suggestion = parentTrans.suggestions!.find(
+        s => s.status === 'pending',
+      )!;
       const suggestedFields = suggestion.suggestion;
 
       const dismissSuggestion = () => {

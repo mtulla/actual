@@ -1017,7 +1017,7 @@ export function getSuggestionsByTransactionIds(ids: string[]) {
     `
     SELECT id, transaction_id, suggestion, source, source_id, confidence, group_id, status, created_at
     FROM suggestions
-    WHERE tombstone = 0 AND status = 'pending' AND transaction_id IN (${placeholders})
+    WHERE tombstone = 0 AND transaction_id IN (${placeholders})
     ORDER BY transaction_id, created_at
   `,
     ids,
