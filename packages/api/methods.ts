@@ -19,6 +19,7 @@ import type {
   ImportTransactionEntity,
   NoteEntity,
   RuleEntity,
+  SuggestionField,
   TransactionEntity,
 } from '@actual-app/core/types/models';
 import type { SyncedPrefs } from '@actual-app/core/types/prefs';
@@ -220,6 +221,47 @@ export function updateTransaction(
 
 export function deleteTransaction(id: TransactionEntity['id']) {
   return send('api/transaction-delete', { id });
+}
+
+/**
+ * Proposes field values for a transaction without changing it. They appear
+ * as suggestions in the register until accepted or dismissed. Suggestions
+ * for other fields are kept.
+ */
+export function suggestTransactionChanges(
+  id: TransactionEntity['id'],
+  suggestions: Partial<Record<SuggestionField, string>>,
+  { sourceId, confidence }: { sourceId?: string; confidence?: number } = {},
+) {
+  return send('api/transaction-suggest', {
+    id,
+    suggestions,
+    sourceId,
+    confidence,
+  });
+}
+
+/**
+ * Applies pending suggestions. Reconciled transactions are skipped with a
+ * `needs-confirmation` result unless `allowReconciled` is set.
+ */
+export function acceptSuggestions(
+  ids: TransactionEntity['id'][],
+  fields?: SuggestionField[],
+  { allowReconciled = false }: { allowReconciled?: boolean } = {},
+) {
+  return send('api/transactions-accept-suggestions', {
+    ids,
+    fields,
+    allowReconciled,
+  });
+}
+
+export function dismissSuggestions(
+  ids: TransactionEntity['id'][],
+  fields?: SuggestionField[],
+) {
+  return send('api/transactions-dismiss-suggestions', { ids, fields });
 }
 
 export function mergeTransactions(

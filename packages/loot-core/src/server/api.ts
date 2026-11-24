@@ -11,6 +11,7 @@ import {
 } from '#shared/errors';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
+import { mergeSuggestions, validateSuggestions } from '#shared/suggestions';
 import {
   deleteTransaction,
   ungroupTransactions,
@@ -23,6 +24,7 @@ import type {
   CategoryGroupEntity,
   RecurConfig,
   ScheduleEntity,
+  TransactionSuggestions,
 } from '#types/models';
 import type { ServerHandlers } from '#types/server-handlers';
 
@@ -675,6 +677,69 @@ handlers['api/transactions-export'] = async function ({
   });
 };
 
+// Suggestions from the API are untrusted (often an AI tool): check their
+// shape, force the source and make sure referenced entities exist.
+async function validateApiSuggestions(
+  input: unknown,
+): Promise<TransactionSuggestions | null> {
+  if (input == null) {
+    return null;
+  }
+  let suggestions: TransactionSuggestions | null;
+  try {
+    suggestions = validateSuggestions(input, { source: 'api' });
+  } catch (e) {
+    throw APIError(e.message);
+  }
+
+  const { payee, category } = suggestions ?? {};
+  if (payee) {
+    const row = await db.getPayee(payee.value);
+    if (!row || row.tombstone) {
+      throw APIError(
+        `Invalid suggestion: payee does not exist: ${payee.value}`,
+      );
+    }
+  }
+  if (category) {
+    const row = await db.getCategory(category.value);
+    if (!row || row.tombstone) {
+      throw APIError(
+        `Invalid suggestion: category does not exist: ${category.value}`,
+      );
+    }
+  }
+  return suggestions;
+}
+
+async function withValidSuggestions<T extends object>(
+  transactions: T[],
+): Promise<T[]> {
+  return Promise.all(
+    transactions.map(async t => {
+      if (
+        'subtransactions' in t &&
+        Array.isArray(t.subtransactions) &&
+        t.subtransactions.some(sub => sub && 'suggestions' in sub)
+      ) {
+        throw APIError('Suggestions are not supported on split children');
+      }
+      return 'suggestions' in t
+        ? { ...t, suggestions: await validateApiSuggestions(t.suggestions) }
+        : t;
+    }),
+  );
+}
+
+function checkIds(ids: unknown): asserts ids is string[] {
+  if (
+    !Array.isArray(ids) ||
+    !ids.every(id => typeof id === 'string' && !id.includes("'"))
+  ) {
+    throw APIError('ids must be an array of transaction ids');
+  }
+}
+
 handlers['api/transactions-import'] = withMutation(async function ({
   accountId,
   transactions,
@@ -684,7 +749,7 @@ handlers['api/transactions-import'] = withMutation(async function ({
   checkFileOpen();
   return handlers['transactions-import']({
     accountId,
-    transactions,
+    transactions: await withValidSuggestions(transactions),
     isPreview,
     opts,
   });
@@ -697,7 +762,7 @@ handlers['api/transactions-add'] = withMutation(async function ({
   learnCategories = false,
 }) {
   checkFileOpen();
-  await addTransactions(accountId, transactions, {
+  await addTransactions(accountId, await withValidSuggestions(transactions), {
     runTransfers,
     learnCategories,
   });
@@ -740,10 +805,82 @@ handlers['api/transaction-update'] = withMutation(async function ({
     return [];
   }
 
+  // Sending back unchanged suggestions (e.g. a whole fetched transaction) must
+  // not re-validate them or relabel rule suggestions as API ones.
+  const unchanged =
+    'suggestions' in fields &&
+    JSON.stringify(fields.suggestions ?? null) ===
+      JSON.stringify(existing.suggestions ?? null);
+  const [validFields] = unchanged
+    ? [{ ...fields, suggestions: existing.suggestions }]
+    : await withValidSuggestions([fields]);
   // `fields` is partial; updateTransaction replaces a split child wholesale
-  const { diff } = updateTransaction(transactions, { ...existing, ...fields });
+  const { diff } = updateTransaction(transactions, {
+    ...existing,
+    ...validFields,
+  });
   return (await handlers['transactions-batch-update'](diff))['updated'];
 });
+
+handlers['api/transaction-suggest'] = withMutation(async function ({
+  id,
+  suggestions,
+  sourceId,
+  confidence,
+}) {
+  checkFileOpen();
+  const { data } = await aqlQuery(
+    q('transactions')
+      .filter({ id })
+      .select(['id', 'suggestions'])
+      .options({ splits: 'all' }),
+  );
+  if (data.length === 0) {
+    throw APIError('Transaction not found: ' + id);
+  }
+
+  const incoming = await validateApiSuggestions(
+    Object.fromEntries(
+      Object.entries(suggestions).map(([field, value]) => [
+        field,
+        {
+          value,
+          ...(sourceId != null && { source_id: sourceId }),
+          ...(confidence != null && { confidence }),
+        },
+      ]),
+    ),
+  );
+  // Merge instead of replace, so suggestions from rules or other tools on
+  // other fields are kept.
+  await handlers['transactions-batch-update']({
+    updated: [
+      { id, suggestions: mergeSuggestions(data[0].suggestions, incoming) },
+    ],
+  });
+});
+
+handlers['api/transactions-accept-suggestions'] = withMutation(async function ({
+  ids,
+  fields,
+  allowReconciled = false,
+}) {
+  checkFileOpen();
+  checkIds(ids);
+  return handlers['transactions-accept-suggestions']({
+    ids,
+    fields,
+    allowReconciled,
+  });
+});
+
+handlers['api/transactions-dismiss-suggestions'] = withMutation(
+  async function ({ ids, fields }) {
+    checkFileOpen();
+    checkIds(ids);
+    return handlers['transactions-dismiss-suggestions']({ ids, fields });
+  },
+);
 
 handlers['api/transaction-delete'] = withMutation(async function ({ id }) {
   checkFileOpen();

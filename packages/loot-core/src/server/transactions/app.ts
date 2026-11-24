@@ -5,10 +5,12 @@ import { mutator } from '#server/mutators';
 import { undoable } from '#server/undo';
 import { q, Query } from '#shared/query';
 import type { QueryState } from '#shared/query';
+import { buildAcceptDiff, removeSuggestions } from '#shared/suggestions';
 import type {
   AccountEntity,
   CategoryGroupEntity,
   PayeeEntity,
+  SuggestionField,
   TransactionEntity,
 } from '#types/models';
 
@@ -29,6 +31,8 @@ export type TransactionHandlers = {
   'transactions-export': typeof exportTransactions;
   'transactions-export-query': typeof exportTransactionsQuery;
   'transactions-merge': typeof mergeTransactions;
+  'transactions-accept-suggestions': typeof acceptSuggestions;
+  'transactions-dismiss-suggestions': typeof dismissSuggestions;
   'get-earliest-transaction': typeof getEarliestTransaction;
   'get-latest-transaction': typeof getLatestTransaction;
 };
@@ -49,6 +53,92 @@ async function handleBatchUpdateTransactions({
   });
 
   return result;
+}
+
+async function getTransactionsWithSuggestions(
+  ids: TransactionEntity['id'][],
+): Promise<TransactionEntity[]> {
+  const { data } = await aqlQuery(
+    q('transactions')
+      .filter({ id: { $oneof: ids }, suggestions: { $ne: null } })
+      .select('*')
+      .options({ splits: 'all' }),
+  );
+  return data;
+}
+
+type SuggestionsArgs = {
+  ids: TransactionEntity['id'][];
+  // All pending suggestions when omitted
+  fields?: SuggestionField[];
+};
+
+// Ids of the payees and categories that still exist, so accepting never
+// writes a deleted one onto a transaction.
+async function getLiveIds(transactions: TransactionEntity[]) {
+  const values = transactions.flatMap(t =>
+    [t.suggestions?.payee?.value, t.suggestions?.category?.value].filter(
+      (v): v is string => v != null,
+    ),
+  );
+  if (values.length === 0) {
+    return new Set<string>();
+  }
+  // Bound parameters: suggestion values can come from the API
+  const marks = values.map(() => '?').join(',');
+  const rows = await db.all<{ id: string }>(
+    `SELECT id FROM payees WHERE tombstone = 0 AND id IN (${marks})
+     UNION SELECT id FROM categories WHERE tombstone = 0 AND id IN (${marks})`,
+    [...values, ...values],
+  );
+  return new Set(rows.map(row => row.id));
+}
+
+async function acceptSuggestions({
+  ids,
+  fields,
+  allowReconciled = false,
+}: SuggestionsArgs & {
+  allowReconciled?: boolean;
+}): Promise<
+  | { status: 'ok'; ids: TransactionEntity['id'][] }
+  | { status: 'needs-confirmation'; reconciledIds: TransactionEntity['id'][] }
+> {
+  const transactions = await getTransactionsWithSuggestions(ids);
+
+  const reconciledIds = transactions.filter(t => t.reconciled).map(t => t.id);
+  if (reconciledIds.length > 0 && !allowReconciled) {
+    return { status: 'needs-confirmation', reconciledIds };
+  }
+
+  // One row update per transaction writes the values and clears the
+  // suggestions together, so undo, sync and transfers behave like a manual
+  // edit. Deliberately not wrapped in another batchMessages: inside one,
+  // batchUpdateTransactions would read the rows from before this change.
+  const liveIds = await getLiveIds(transactions);
+  const updated = transactions.map(t =>
+    buildAcceptDiff(
+      t,
+      fields,
+      (field, value) => field === 'notes' || liveIds.has(value),
+    ),
+  );
+  if (updated.length > 0) {
+    await batchUpdateTransactions({ updated });
+  }
+  return { status: 'ok', ids: updated.map(u => u.id) };
+}
+
+async function dismissSuggestions({ ids, fields }: SuggestionsArgs) {
+  const transactions = await getTransactionsWithSuggestions(ids);
+  const updated = transactions.map(t => ({
+    id: t.id,
+    suggestions: removeSuggestions(t.suggestions, fields),
+  }));
+  if (updated.length > 0) {
+    await batchUpdateTransactions({ updated });
+  }
+  return { ids: updated.map(u => u.id) };
 }
 
 async function addTransaction(transaction: TransactionEntity) {
@@ -157,6 +247,14 @@ app.method(
   mutator(undoable(handleBatchUpdateTransactions)),
 );
 app.method('transactions-merge', mutator(undoable(mergeTransactions)));
+app.method(
+  'transactions-accept-suggestions',
+  mutator(undoable(acceptSuggestions)),
+);
+app.method(
+  'transactions-dismiss-suggestions',
+  mutator(undoable(dismissSuggestions)),
+);
 
 app.method('transaction-add', mutator(addTransaction));
 app.method('transaction-update', mutator(updateTransaction));

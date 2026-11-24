@@ -17,6 +17,7 @@ import type {
 } from '#server/api-models';
 import type { BudgetFileHandlers } from '#server/budgetfiles/app';
 import type { batchUpdateTransactions } from '#server/transactions';
+import type { TransactionHandlers } from '#server/transactions/app';
 import type { QueryState } from '#shared/query';
 
 import type {
@@ -29,6 +30,7 @@ import type {
   PayeeLocationEntity,
   RuleEntity,
   ScheduleEntity,
+  SuggestionField,
   TransactionEntity,
 } from './models';
 
@@ -146,6 +148,24 @@ export type ApiHandlers = {
   'api/transaction-delete': (arg: {
     id: TransactionEntity['id'];
   }) => Promise<Awaited<ReturnType<typeof batchUpdateTransactions>>['deleted']>;
+
+  'api/transaction-suggest': (arg: {
+    id: TransactionEntity['id'];
+    suggestions: Partial<Record<SuggestionField, string>>;
+    sourceId?: string;
+    confidence?: number;
+  }) => Promise<void>;
+
+  'api/transactions-accept-suggestions': (arg: {
+    ids: TransactionEntity['id'][];
+    fields?: SuggestionField[];
+    allowReconciled?: boolean;
+  }) => ReturnType<TransactionHandlers['transactions-accept-suggestions']>;
+
+  'api/transactions-dismiss-suggestions': (arg: {
+    ids: TransactionEntity['id'][];
+    fields?: SuggestionField[];
+  }) => ReturnType<TransactionHandlers['transactions-dismiss-suggestions']>;
 
   'api/transactions-merge': (arg: {
     ids: [TransactionEntity['id'], TransactionEntity['id']];

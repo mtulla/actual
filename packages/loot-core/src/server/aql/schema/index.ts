@@ -45,6 +45,7 @@ export const schema = {
     date: f('date', { required: true }),
     imported_id: f('string'),
     error: f('json'),
+    suggestions: f('json'),
     imported_payee: f('string'),
     starting_balance_flag: f('boolean'),
     transfer_id: f('id'),

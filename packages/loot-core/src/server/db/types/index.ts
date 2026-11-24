@@ -201,6 +201,7 @@ export type DbTransaction = {
   notes?: string | null;
   financial_id?: string | null;
   error?: string | null;
+  suggestions?: string | null;
   imported_description?: string | null;
   transferred_id?: DbTransaction['id'] | null;
   schedule?: DbSchedule['id'] | null;
@@ -310,6 +311,7 @@ export type DbViewTransactionInternal = {
   notes: DbTransaction['notes'] | null;
   imported_id: DbTransaction['financial_id'] | null;
   error: DbTransaction['error'] | null;
+  suggestions: DbTransaction['suggestions'] | null;
   imported_payee: DbTransaction['imported_description'] | null;
   starting_balance_flag: DbTransaction['starting_balance_flag'] | null;
   transfer_id: DbTransaction['transferred_id'] | null;

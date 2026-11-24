@@ -2,6 +2,7 @@ import { aqlQuery } from '#server/aql';
 import * as db from '#server/db';
 import { validForMergeExplanation } from '#shared/merge';
 import { q } from '#shared/query';
+import { filledSuggestionFields, removeSuggestions } from '#shared/suggestions';
 import {
   deleteTransaction as sharedDeleteTransaction,
   ungroupTransactions,
@@ -113,6 +114,11 @@ export async function mergeTransactionsNoTransfer(
 ): Promise<TransactionEntity['id']> {
   const { keep, drop } = determineKeepDrop(a, b);
 
+  const suggestions = removeSuggestions(
+    keep.suggestions,
+    filledSuggestionFields(keep.suggestions, keep, drop),
+  );
+
   // Load subtransactions with a single query, then split by parent_id in memory
   const keepSubtransactions: TransactionEntity[] = [];
   const dropSubtransactions: TransactionEntity[] = [];
@@ -163,6 +169,7 @@ export async function mergeTransactionsNoTransfer(
       cleared: keep.cleared || drop.cleared,
       reconciled: keep.reconciled || drop.reconciled,
       schedule: keep.schedule || drop.schedule,
+      suggestions,
     } as unknown as TransactionEntity);
   } else {
     // Normal merge without subtransactions
@@ -174,6 +181,7 @@ export async function mergeTransactionsNoTransfer(
       cleared: keep.cleared || drop.cleared,
       reconciled: keep.reconciled || drop.reconciled,
       schedule: keep.schedule || drop.schedule,
+      suggestions,
     } as TransactionEntity);
   }
 
