@@ -35,6 +35,7 @@ import {
   unparse,
 } from '@actual-app/core/shared/rules';
 import type { ScheduleStatusType } from '@actual-app/core/shared/schedules';
+import { SIMPLE_FIELDS } from '@actual-app/core/shared/suggestions';
 import type {
   NewRuleEntity,
   RuleActionEntity,
@@ -512,6 +513,8 @@ function getActionFields() {
   ].map(field => [field, mapField(field)]);
 }
 const parentOnlyFields = ['amount', 'cleared', 'account', 'date'];
+// Fields a transaction suggestion can hold
+const SUGGEST_FIELDS: readonly string[] = SIMPLE_FIELDS;
 function getSplitActionFields() {
   return getActionFields().filter(
     ([field]) => !parentOnlyFields.includes(field),
@@ -566,22 +569,31 @@ function ActionEditor({
   const isTemplatingEnabled = actionTemplating || templated;
   const isFormulaEnabled = formulaMode || hasFormula;
 
+  const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
+  // Split suggestions are not supported yet
+  const ops: Array<typeof op> = [
+    'set',
+    ...((isSuggestionsEnabled && !options?.splitIndex) || op === 'suggest'
+      ? (['suggest'] as const)
+      : []),
+    'prepend-notes',
+    'append-notes',
+    'delete-transaction',
+  ];
+
   const fields = (
     options?.splitIndex ? getSplitActionFields() : getActionFields()
   ).filter(
     ([s]) =>
-      actionTemplating || formulaMode || !s.includes('_name') || field === s,
+      (op !== 'suggest' || SUGGEST_FIELDS.includes(s)) &&
+      (actionTemplating || formulaMode || !s.includes('_name') || field === s),
   );
 
   return (
     <Editor style={editorStyle} error={error}>
-      {op === 'set' ? (
+      {op === 'set' || op === 'suggest' ? (
         <>
-          <OpSelect
-            ops={['set', 'prepend-notes', 'append-notes', 'delete-transaction']}
-            value={op}
-            onChange={onChange}
-          />
+          <OpSelect ops={ops} value={op} onChange={onChange} />
 
           <FieldSelect
             // @ts-expect-error fix this
@@ -776,11 +788,7 @@ function ActionEditor({
         </>
       ) : op === 'prepend-notes' || op === 'append-notes' ? (
         <>
-          <OpSelect
-            ops={['set', 'prepend-notes', 'append-notes', 'delete-transaction']}
-            value={op}
-            onChange={onChange}
-          />
+          <OpSelect ops={ops} value={op} onChange={onChange} />
 
           <View style={{ flex: 1, ...(isNarrowWidth && narrowValueStyle) }}>
             <GenericInput
@@ -795,11 +803,7 @@ function ActionEditor({
           </View>
         </>
       ) : op === 'delete-transaction' ? (
-        <OpSelect
-          ops={['set', 'prepend-notes', 'append-notes', 'delete-transaction']}
-          value={op}
-          onChange={onChange}
-        />
+        <OpSelect ops={ops} value={op} onChange={onChange} />
       ) : null}
 
       {op !== 'delete-transaction' && (
@@ -814,6 +818,7 @@ function ActionEditor({
             onAdd={onAdd}
             onDelete={
               (op === 'set' ||
+                op === 'suggest' ||
                 op === 'prepend-notes' ||
                 op === 'append-notes') &&
               onDelete
@@ -1276,6 +1281,10 @@ export function RuleEditor({
               };
               return newInput(a);
             } else if (field === 'op') {
+              if (value === 'suggest' && !SUGGEST_FIELDS.includes(a.field)) {
+                a.field = 'category';
+                a.type = FIELD_TYPES.get(a.field);
+              }
               a.value = null;
               a.inputKey = '' + Math.random();
               a.options = { ...a.options, template: undefined };

@@ -149,9 +149,11 @@ export class Rule {
     this.conditions = conditions.map(
       c => new Condition(c.op, c.field, c.value, c.options),
     );
-    this.actions = actions.map(
-      a => new Action(a.op, a.field, a.value, a.options),
-    );
+    this.actions = actions.map(a => {
+      const action = new Action(a.op, a.field, a.value, a.options);
+      action.ruleId = id;
+      return action;
+    });
   }
 
   evalConditions(object): boolean {

@@ -140,7 +140,9 @@ export function shouldApplyRuleChange(
   nextValue: unknown,
   clearedFieldNames: readonly string[] = [],
 ) {
-  if (clearedFieldNames.includes(field)) {
+  // Suggestions come from imports, explicit rule runs and the API, not from
+  // rules running while a transaction is being entered
+  if (clearedFieldNames.includes(field) || field === 'suggestions') {
     return false;
   }
 

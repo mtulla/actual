@@ -146,7 +146,8 @@ export type RuleActionEntity =
 
 export type SetRuleActionEntity = {
   field: string;
-  op: 'set';
+  // `suggest` stores the value as a pending suggestion instead
+  op: 'set' | 'suggest';
   value: unknown;
   options?: {
     template?: string;

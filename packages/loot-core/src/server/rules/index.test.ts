@@ -418,6 +418,42 @@ describe('Action', () => {
     }).toThrow(/invalid action operation/i);
   });
 
+  test('`suggest` operator stores a suggestion and leaves the field', () => {
+    const rule = new Rule({
+      id: 'rule-1',
+      conditionsOp: 'and',
+      conditions: [{ op: 'is', field: 'imported_payee', value: 'KROGER' }],
+      actions: [{ op: 'suggest', field: 'category', value: 'food' }],
+    });
+    const other = new Rule({
+      id: 'rule-2',
+      conditionsOp: 'and',
+      conditions: [{ op: 'is', field: 'imported_payee', value: 'KROGER' }],
+      actions: [{ op: 'suggest', field: 'notes', value: 'Groceries' }],
+    });
+    let item: Record<string, unknown> = {
+      imported_payee: 'KROGER',
+      category: null,
+      notes: '',
+    };
+    item = other.apply(rule.apply(item));
+
+    expect(item.category).toBe(null);
+    expect(item.notes).toBe('');
+    expect(item.suggestions).toEqual({
+      category: { value: 'food', source: 'rule', source_id: 'rule-1' },
+      notes: { value: 'Groceries', source: 'rule', source_id: 'rule-2' },
+    });
+
+    // Nothing to suggest when the field already has the value
+    const same = rule.apply({ imported_payee: 'KROGER', category: 'food' });
+    expect(same.suggestions).toBeUndefined();
+
+    expect(() => {
+      new Action('suggest', 'amount', 100, null);
+    }).toThrow(/invalid field for suggest/i);
+  });
+
   test('empty account values result in error', () => {
     expect(() => {
       new Action('set', 'account', '', null);

@@ -278,6 +278,65 @@ describe('Account sync', () => {
     });
   });
 
+  test('reconcile stores suggestions from suggest rules', async () => {
+    const { id: acctId } = await prepareDatabase();
+    await db.update('preferences', {
+      id: 'flags.transactionSuggestions',
+      value: 'true',
+    });
+    await insertRule({
+      stage: null,
+      conditionsOp: 'and',
+      conditions: [{ op: 'is', field: 'imported_payee', value: 'KROGER' }],
+      actions: [{ op: 'suggest', field: 'notes', value: 'Groceries' }],
+    });
+    await db.insertTransaction({
+      id: 'one',
+      account: acctId,
+      amount: 2948,
+      date: '2020-01-01',
+    });
+
+    // The first row matches the existing transaction, the second is new
+    const imported = [
+      {
+        date: '2020-01-01',
+        amount: 2948,
+        imported_payee: 'KROGER',
+        imported_id: 'a',
+      },
+      {
+        date: '2020-01-02',
+        amount: 1000,
+        imported_payee: 'KROGER',
+        imported_id: 'b',
+      },
+    ];
+    await reconcileTransactions(acctId, imported);
+
+    const rows = await db.all<{ notes: string | null; suggestions: string }>(
+      'SELECT notes, suggestions FROM transactions WHERE acct = ? ORDER BY date',
+      [acctId],
+    );
+    const suggestion = { notes: { value: 'Groceries', source: 'rule' } };
+    expect(rows.map(r => r.notes)).toEqual([null, null]);
+    expect(rows.map(r => JSON.parse(r.suggestions))).toEqual([
+      { notes: expect.objectContaining(suggestion.notes) },
+      { notes: expect.objectContaining(suggestion.notes) },
+    ]);
+
+    // Syncing the same rows again doesn't bring back dismissed suggestions
+    db.runQuery('UPDATE transactions SET suggestions = NULL WHERE acct = ?', [
+      acctId,
+    ]);
+    await reconcileTransactions(acctId, imported);
+    const again = await db.all<{ suggestions: string | null }>(
+      'SELECT suggestions FROM transactions WHERE acct = ?',
+      [acctId],
+    );
+    expect(again.map(r => r.suggestions)).toEqual([null, null]);
+  });
+
   test('reconcile doesnt rematch deleted transactions if reimport disabled', async () => {
     const { id: acctId } = await prepareDatabase();
     const reimportKey =

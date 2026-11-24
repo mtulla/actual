@@ -44,7 +44,7 @@ export function ActionExpression({ style, ...props }: ActionExpressionProps) {
         ...style,
       }}
     >
-      {props.op === 'set' ? (
+      {props.op === 'set' || props.op === 'suggest' ? (
         <SetActionExpression {...props} />
       ) : props.op === 'set-split-amount' ? (
         <SetSplitAmountActionExpression {...props} />

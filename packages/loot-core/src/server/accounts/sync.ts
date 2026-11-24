@@ -20,7 +20,12 @@ import {
 } from '#server/util/custom-sync-mapping';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
-import { filledSuggestionFields, removeSuggestions } from '#shared/suggestions';
+import {
+  filledSuggestionFields,
+  mergeSuggestions,
+  removeSuggestions,
+  SIMPLE_FIELDS,
+} from '#shared/suggestions';
 import {
   makeChild as makeChildTransaction,
   recalculateSplit,
@@ -716,17 +721,25 @@ export async function reconcileTransactions(
         updates['date'] = trans.date;
       }
 
-      // Suggestions for fields this import fills in are no longer needed
+      // Rule suggestions from the import only apply the first time a row is
+      // matched, and only to fields it has empty: syncing the same row again
+      // must not bring back suggestions the user accepted or dismissed. The
+      // row's own suggestions win, and those for fields this import fills
+      // in are moot.
       const existingSuggestions = match.suggestions
         ? JSON.parse(match.suggestions)
         : null;
-      const filled = filledSuggestionFields(
-        existingSuggestions,
-        existing,
-        updates,
-      );
-      if (filled.length > 0) {
-        updates['suggestions'] = removeSuggestions(existingSuggestions, filled);
+      const fromImport = match.imported_id
+        ? null
+        : removeSuggestions(
+            trans.suggestions,
+            SIMPLE_FIELDS.filter(field => existing[field]),
+          );
+      let suggestions = mergeSuggestions(fromImport, existingSuggestions);
+      const filled = filledSuggestionFields(suggestions, existing, updates);
+      suggestions = removeSuggestions(suggestions, filled);
+      if (JSON.stringify(suggestions) !== JSON.stringify(existingSuggestions)) {
+        updates['suggestions'] = suggestions;
       }
 
       const fieldsToMarkUpdated = Object.keys(updates).filter(k => {

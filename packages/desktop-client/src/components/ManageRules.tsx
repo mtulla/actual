@@ -79,7 +79,7 @@ export function ruleToString(rule: RuleEntity, data: FilterData) {
       : mapValue(cond.field, cond.value, data),
   ]);
   const actions = rule.actions.flatMap(action => {
-    if (action.op === 'set') {
+    if (action.op === 'set' || action.op === 'suggest') {
       return [
         friendlyOp(action.op),
         mapField(action.field),

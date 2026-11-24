@@ -1547,6 +1547,59 @@ describe('Learning categories', () => {
     expect(getRules()[0].conditions[0].op).toBe('oneOf');
   });
 
+  test('updates a learned suggest rule instead of adding a set rule', async () => {
+    await loadData();
+
+    await insertRule({
+      stage: null,
+      conditionsOp: 'and',
+      conditions: [{ op: 'is', field: 'payee', value: 'foo' }],
+      actions: [{ op: 'suggest', field: 'category', value: 'beer' }],
+    });
+
+    const trans = {
+      date: '2016-12-01',
+      account: 'acct',
+      payee: 'foo',
+      category: 'food',
+    };
+    await db.insertTransaction({ ...trans, id: 'one' });
+    await db.insertTransaction({ ...trans, id: 'two' });
+    await db.insertTransaction({ ...trans, id: 'three' });
+    await updateCategoryRules([{ ...trans, id: 'three' }]);
+
+    expect(getRules().length).toBe(1);
+    expect(getRules()[0].actions[0]).toMatchObject({
+      op: 'suggest',
+      value: 'food',
+    });
+  });
+
+  test('creates suggest rules when the user opted in', async () => {
+    await loadData();
+    db.runQuery(
+      `INSERT INTO preferences (id, value) VALUES ('flags.transactionSuggestions', 'true'), ('learn-categories-as-suggestions', 'true')`,
+    );
+
+    const trans = {
+      date: '2016-12-01',
+      account: 'acct',
+      payee: 'foo',
+      category: 'food',
+    };
+    await db.insertTransaction({ ...trans, id: 'one' });
+    await db.insertTransaction({ ...trans, id: 'two' });
+    await db.insertTransaction({ ...trans, id: 'three' });
+    await updateCategoryRules([{ ...trans, id: 'three' }]);
+
+    expect(getRules().length).toBe(1);
+    expect(getRules()[0].actions[0]).toMatchObject({
+      op: 'suggest',
+      field: 'category',
+      value: 'food',
+    });
+  });
+
   test('creates a rule if a "one of" rule sets a different category', async () => {
     await loadData();
 

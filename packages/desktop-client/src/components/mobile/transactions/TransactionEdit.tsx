@@ -1781,6 +1781,7 @@ function TransactionEditUnconnected({
             // — except fields the user explicitly cleared, which must stay empty.
             if (
               !clearedOnThisRow.includes(field) &&
+              field !== 'suggestions' &&
               (updatedField === 'payee' ||
                 shouldApplyRuleChange(
                   field,
