@@ -253,6 +253,31 @@ describe('Account sync', () => {
     );
   });
 
+  test('reconcile drops suggestions for fields the import fills in', async () => {
+    const { id: acctId } = await prepareDatabase();
+
+    await db.insertTransaction({
+      id: 'one',
+      account: acctId,
+      amount: 2948,
+      date: '2020-01-01',
+      suggestions: {
+        notes: { value: 'Suggested', source: 'api' },
+        category: { value: 'cat-1', source: 'rule' },
+      },
+    });
+
+    await reconcileTransactions(acctId, [
+      { date: '2020-01-01', amount: 2948, notes: 'From the bank' },
+    ]);
+
+    const transaction = await db.getTransaction('one');
+    expect(transaction.notes).toBe('From the bank');
+    expect(transaction.suggestions).toEqual({
+      category: { value: 'cat-1', source: 'rule' },
+    });
+  });
+
   test('reconcile doesnt rematch deleted transactions if reimport disabled', async () => {
     const { id: acctId } = await prepareDatabase();
     const reimportKey =

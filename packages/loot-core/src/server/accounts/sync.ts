@@ -20,6 +20,7 @@ import {
 } from '#server/util/custom-sync-mapping';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
+import { filledSuggestionFields, removeSuggestions } from '#shared/suggestions';
 import {
   makeChild as makeChildTransaction,
   recalculateSplit,
@@ -715,6 +716,19 @@ export async function reconcileTransactions(
         updates['date'] = trans.date;
       }
 
+      // Suggestions for fields this import fills in are no longer needed
+      const existingSuggestions = match.suggestions
+        ? JSON.parse(match.suggestions)
+        : null;
+      const filled = filledSuggestionFields(
+        existingSuggestions,
+        existing,
+        updates,
+      );
+      if (filled.length > 0) {
+        updates['suggestions'] = removeSuggestions(existingSuggestions, filled);
+      }
+
       const fieldsToMarkUpdated = Object.keys(updates).filter(k => {
         // do not mark raw_synced_data if it's gone from falsy to falsy
         if (!existing.raw_synced_data && !trans.raw_synced_data) {
@@ -930,12 +944,13 @@ export async function matchTransactions(
             | 'imported_payee'
             | 'category'
             | 'notes'
+            | 'suggestions'
             | 'reconciled'
             | 'cleared'
             | 'amount'
           >
         >(
-          `SELECT id, is_parent, parent_id, date, imported_id, payee, imported_payee, category, notes, reconciled, cleared, amount
+          `SELECT id, is_parent, parent_id, date, imported_id, payee, imported_payee, category, notes, suggestions, reconciled, cleared, amount
           FROM v_transactions
           WHERE
             -- If both ids are set, and we didn't match earlier then skip dedup
@@ -963,12 +978,13 @@ export async function matchTransactions(
             | 'imported_payee'
             | 'category'
             | 'notes'
+            | 'suggestions'
             | 'reconciled'
             | 'cleared'
             | 'amount'
           >
         >(
-          `SELECT id, is_parent, parent_id, date, imported_id, payee, imported_payee, category, notes, reconciled, cleared, amount
+          `SELECT id, is_parent, parent_id, date, imported_id, payee, imported_payee, category, notes, suggestions, reconciled, cleared, amount
           FROM v_transactions
           WHERE date >= ? AND date <= ? AND amount = ? AND account = ?`,
           [sevenDaysBefore, sevenDaysAfter, trans.amount || 0, acctId],

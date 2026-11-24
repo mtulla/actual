@@ -1,0 +1,5 @@
+BEGIN TRANSACTION;
+
+ALTER TABLE transactions ADD COLUMN suggestions TEXT;
+
+COMMIT;

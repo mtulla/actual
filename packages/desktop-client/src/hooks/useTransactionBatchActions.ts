@@ -302,6 +302,8 @@ export function useTransactionBatchActions() {
                 ...t,
                 cleared: false,
                 reconciled: false,
+                // A copy shouldn't carry over pending suggestions
+                suggestions: null,
               })),
             );
           },

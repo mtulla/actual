@@ -35,5 +35,29 @@ export type TransactionEntity = {
     difference: number;
   } | null;
   raw_synced_data?: string | undefined;
+  suggestions?: TransactionSuggestions | null;
   _ruleErrors?: string[];
 };
+
+export type SuggestionSource = 'rule' | 'api';
+
+export type TransactionSuggestion<Value> = {
+  value: Value;
+  source: SuggestionSource;
+  // The rule id, or a free-form name of the tool that made the suggestion
+  source_id?: string;
+  // 0–1, stored for API consumers; not shown in the UI
+  confidence?: number;
+};
+
+// Pending suggestions only: accepting or dismissing a field removes it.
+// shortcut: stored as one JSON column, so concurrent edits from two devices
+// are last-write-wins for the whole set (a dismissed one can come back);
+// move to per-field storage if that shows up in practice.
+export type TransactionSuggestions = {
+  payee?: TransactionSuggestion<PayeeEntity['id']>;
+  notes?: TransactionSuggestion<string>;
+  category?: TransactionSuggestion<CategoryEntity['id']>;
+};
+
+export type SuggestionField = keyof TransactionSuggestions;

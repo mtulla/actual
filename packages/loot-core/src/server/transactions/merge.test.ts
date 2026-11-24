@@ -165,6 +165,27 @@ describe('Merging success', () => {
     });
   });
 
+  it('drops suggestions for fields filled in from the merged transaction', async () => {
+    const t1 = await db.insertTransaction({
+      ...transaction1,
+      category: null,
+      imported_id: 'imported_1',
+      suggestions: {
+        category: { value: '1', source: 'rule' },
+        notes: { value: 'Dinner', source: 'api' },
+      },
+    });
+    const t2 = await db.insertTransaction(transaction2);
+
+    expect(await mergeTransactions([{ id: t1 }, { id: t2 }])).toBe(t1);
+
+    const merged = await db.getTransaction(t1);
+    expect(merged.category).toBe('2');
+    expect(merged.suggestions).toEqual({
+      notes: { value: 'Dinner', source: 'api' },
+    });
+  });
+
   it('first banksynced, second manual keeps banksynced values', async () => {
     const t1 = await db.insertTransaction({
       ...transaction1,

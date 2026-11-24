@@ -1278,6 +1278,120 @@ describe('API CRUD operations', () => {
     expect(after[0]).toMatchObject({ id: keptId, notes: 'notes' });
   });
 
+  // apis: suggestTransactionChanges, acceptSuggestions, dismissSuggestions
+  test('Transactions: suggestions can be made, accepted and dismissed', async () => {
+    const accountId = await api.createAccount({ name: 'suggest-account' }, 0);
+    const [group] = await api.getCategoryGroups();
+    const categoryId = await api.createCategory({
+      name: 'Transport',
+      group_id: group.id,
+    });
+    const payeeId = await api.createPayee({ name: 'Chef Bistro' });
+    await api.addTransactions(accountId, [
+      { date: '2023-11-03', amount: -2340 },
+      { date: '2023-11-04', amount: -5680 },
+    ]);
+    const getAll = () =>
+      api.getTransactions(accountId, '2023-11-01', '2023-11-30');
+    const [first, second] = await getAll();
+
+    await api.suggestTransactionChanges(
+      first.id,
+      { category: categoryId },
+      { sourceId: 'test-tool', confidence: 0.9 },
+    );
+    // A second call merges with the existing suggestions
+    await api.suggestTransactionChanges(first.id, { payee: payeeId });
+    await api.suggestTransactionChanges(second.id, { notes: 'Dinner' });
+
+    let [a, b] = await getAll();
+    expect(a.category).toBeFalsy();
+    expect(a.suggestions).toEqual({
+      category: {
+        value: categoryId,
+        source: 'api',
+        source_id: 'test-tool',
+        confidence: 0.9,
+      },
+      payee: { value: payeeId, source: 'api' },
+    });
+    expect(b.suggestions).toEqual({
+      notes: { value: 'Dinner', source: 'api' },
+    });
+
+    // Accepting one field applies it and keeps the other suggestion pending
+    await api.acceptSuggestions([first.id], ['category']);
+    [a] = await getAll();
+    expect(a.category).toBe(categoryId);
+    expect(a.suggestions).toEqual({ payee: { value: payeeId, source: 'api' } });
+
+    await api.dismissSuggestions([first.id]);
+    [a] = await getAll();
+    expect(a.payee).toBeFalsy();
+    expect(a.suggestions).toBeNull();
+
+    // Reconciled rows need explicit confirmation
+    await api.updateTransaction(second.id, { reconciled: true });
+    expect(await api.acceptSuggestions([second.id])).toEqual({
+      status: 'needs-confirmation',
+      reconciledIds: [second.id],
+    });
+    [, b] = await getAll();
+    expect(b.notes).toBeFalsy();
+    await api.acceptSuggestions([second.id], undefined, {
+      allowReconciled: true,
+    });
+    [, b] = await getAll();
+    expect(b.notes).toBe('Dinner');
+    expect(b.suggestions).toBeNull();
+  });
+
+  test('Transactions: invalid suggestions are rejected', async () => {
+    const accountId = await api.createAccount({ name: 'invalid-account' }, 0);
+    await api.addTransactions(accountId, [{ date: '2023-11-03', amount: -1 }]);
+    const [transaction] = await api.getTransactions(
+      accountId,
+      '2023-11-01',
+      '2023-11-30',
+    );
+
+    await expect(
+      api.suggestTransactionChanges(transaction.id, { category: 'missing' }),
+    ).rejects.toThrow('category does not exist');
+    await expect(
+      api.suggestTransactionChanges(
+        transaction.id,
+        { notes: 'x' },
+        { confidence: 5 },
+      ),
+    ).rejects.toThrow('confidence');
+    await expect(
+      api.updateTransaction(transaction.id, {
+        // @ts-expect-error - testing untrusted input
+        suggestions: { amount: { value: '1', source: 'rule' } },
+      }),
+    ).rejects.toThrow('unsupported field');
+    await expect(
+      // @ts-expect-error - testing untrusted input
+      api.updateTransaction(transaction.id, { suggestions: 5 }),
+    ).rejects.toThrow('must be an object');
+    await expect(
+      api.addTransactions(accountId, [
+        {
+          date: '2023-11-04',
+          amount: -1,
+          subtransactions: [
+            {
+              amount: -1,
+              // @ts-expect-error - testing untrusted input
+              suggestions: { notes: { value: 'x', source: 'rule' } },
+            },
+          ],
+        },
+      ]),
+    ).rejects.toThrow('split children');
+  });
+
   test('Transactions: import notes are preserved when importing', async () => {
     const accountId = await api.createAccount({ name: 'test-account' }, 0);
 
