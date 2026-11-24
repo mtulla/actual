@@ -128,6 +128,8 @@ export function friendlyOp(op, type?) {
       return t('is false');
     case 'set':
       return t('set');
+    case 'suggest':
+      return t('suggest');
     case 'set-split-amount':
       return t('allocate');
     case 'link-schedule':

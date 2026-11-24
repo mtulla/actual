@@ -2,6 +2,27 @@ import { Rule } from './rule';
 import { migrateIds, parseBetweenDate } from './rule-utils';
 
 describe('migrateIds', () => {
+  it('remaps the values of set and suggest actions', () => {
+    const rule = new Rule({
+      conditionsOp: 'and',
+      conditions: [{ op: 'is', field: 'notes', value: 'x', options: null }],
+      actions: [
+        { op: 'set', field: 'payee', value: 'payee-a' },
+        { op: 'suggest', field: 'category', value: 'cat-a' },
+      ],
+    });
+
+    migrateIds(
+      rule,
+      new Map([
+        ['payee-a', 'payee-b'],
+        ['cat-a', 'cat-b'],
+      ]),
+    );
+
+    expect(rule.actions.map(a => a.value)).toEqual(['payee-b', 'cat-b']);
+  });
+
   it('deduplicates mapped IDs in oneOf and notOneOf conditions', () => {
     const rule = new Rule({
       conditionsOp: 'and',

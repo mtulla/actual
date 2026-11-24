@@ -8,7 +8,7 @@ import type {
 
 // Fields whose suggestion is accepted by copying the value onto the
 // transaction. Split and transfer suggestions get their own accept logic.
-const SIMPLE_FIELDS = ['payee', 'notes', 'category'] as const;
+export const SIMPLE_FIELDS = ['payee', 'notes', 'category'] as const;
 
 const MAX_STRING_LENGTH = 1000;
 const MAX_SOURCE_ID_LENGTH = 100;

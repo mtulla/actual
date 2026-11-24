@@ -152,7 +152,7 @@ export function migrateIds(rule: Rule, mappings: Map<string, string>): void {
   for (let ai = 0; ai < rule.actions.length; ai++) {
     const action = rule.actions[ai];
     if (action.type === 'id') {
-      if (action.op === 'set') {
+      if (action.op === 'set' || action.op === 'suggest') {
         action.value = mappings.get(action.rawValue) || action.rawValue;
       }
     }
@@ -207,7 +207,7 @@ export function iterateIds(
       if (action.type === 'id' && action.field === fieldName) {
         // Currently `set` is the only op, but if we add more this
         // will need to be extended
-        if (action.op === 'set') {
+        if (action.op === 'set' || action.op === 'suggest') {
           if (func(rule, action.value)) {
             break;
           }

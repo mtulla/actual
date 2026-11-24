@@ -17,6 +17,7 @@ registerHandlebarsHelpers();
 export { parseDateString };
 export { Condition };
 export { Action };
+export { setSuggestActionsEnabled } from './action';
 export { Rule, execActions };
 export { RuleIndexer };
 export { rankRules, migrateIds, iterateIds };

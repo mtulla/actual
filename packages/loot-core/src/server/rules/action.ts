@@ -12,6 +12,7 @@ import {
 } from '#shared/formulas/customFunctions';
 import { currentDay, format, parseDate } from '#shared/months';
 import { FIELD_TYPES } from '#shared/rules';
+import { mergeSuggestions, SIMPLE_FIELDS } from '#shared/suggestions';
 import { amountToInteger, integerToAmount } from '#shared/util';
 
 import { assert } from './rule-utils';
@@ -26,6 +27,7 @@ HyperFormula.registerFunctionPlugin(
 
 const ACTION_OPS = [
   'set',
+  'suggest',
   'set-split-amount',
   'link-schedule',
   'prepend-notes',
@@ -33,6 +35,13 @@ const ACTION_OPS = [
   'delete-transaction',
 ] as const;
 type ActionOperator = (typeof ACTION_OPS)[number];
+
+// Off while the experimental feature is off, so `suggest` rules don't write
+// suggestions nobody can see. Rule runs set it from the feature flag.
+let suggestActionsEnabled = true;
+export function setSuggestActionsEnabled(enabled: boolean) {
+  suggestActionsEnabled = enabled;
+}
 
 // Transaction fields stored as integers that a formula reads as the amounts
 // shown in the app.
@@ -49,6 +58,8 @@ export class Action {
   rawValue;
   type;
   value;
+  // Set by the rule, so a suggestion can name the rule that made it
+  ruleId?: string;
 
   private handlebarsTemplate?: Handlebars.TemplateDelegate;
 
@@ -59,7 +70,15 @@ export class Action {
       `Invalid action operation: ${op}`,
     );
 
-    if (op === 'set') {
+    if (op === 'suggest') {
+      assert(
+        SIMPLE_FIELDS.includes(field),
+        'internal',
+        `Invalid field for suggest action: ${field}`,
+      );
+    }
+
+    if (op === 'set' || op === 'suggest') {
       const typeName = FIELD_TYPES.get(field);
       assert(typeName, 'internal', `Invalid field for action: ${field}`);
       this.field = field;
@@ -97,7 +116,33 @@ export class Action {
   }
 
   exec(object) {
-    switch (this.op) {
+    if (this.op !== 'suggest') {
+      this.execOp(this.op, object);
+      return;
+    }
+    if (!suggestActionsEnabled) {
+      return;
+    }
+    // Work out the value like `set` would, without changing the field
+    const scratch = { ...object };
+    this.execOp('set', scratch);
+    if (scratch._ruleErrors) {
+      object._ruleErrors = scratch._ruleErrors;
+    }
+    const value = scratch[this.field];
+    if (value != null && value !== '' && value !== object[this.field]) {
+      object.suggestions = mergeSuggestions(object.suggestions, {
+        [this.field]: {
+          value: String(value),
+          source: 'rule',
+          ...(this.ruleId && { source_id: this.ruleId }),
+        },
+      });
+    }
+  }
+
+  private execOp(op: ActionOperator, object) {
+    switch (op) {
       case 'set':
         if (this.options?.formula) {
           try {

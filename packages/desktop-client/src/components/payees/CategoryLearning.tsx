@@ -3,9 +3,12 @@ import { Trans, useTranslation } from 'react-i18next';
 
 import { Button } from '@actual-app/components/button';
 import { Paragraph } from '@actual-app/components/paragraph';
+import { View } from '@actual-app/components/view';
 
 import { Link } from '#components/common/Link';
 import { Modal, ModalCloseButton, ModalHeader } from '#components/common/Modal';
+import { Checkbox } from '#components/forms';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useSyncedPref } from '#hooks/useSyncedPref';
 
 export function CategoryLearning() {
@@ -13,6 +16,10 @@ export function CategoryLearning() {
   const [learnCategories = 'true', setLearnCategories] =
     useSyncedPref('learn-categories');
   const isLearnCategoriesEnabled = String(learnCategories) === 'true';
+  const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
+  const [learnAsSuggestions, setLearnAsSuggestions] = useSyncedPref(
+    'learn-categories-as-suggestions',
+  );
 
   return (
     <Modal
@@ -58,6 +65,29 @@ export function CategoryLearning() {
               <Trans>Enable category learning</Trans>
             )}
           </Button>
+          {isSuggestionsEnabled && isLearnCategoriesEnabled && (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: 15,
+              }}
+            >
+              <Checkbox
+                id="learn-categories-as-suggestions"
+                checked={learnAsSuggestions === 'true'}
+                onChange={() =>
+                  setLearnAsSuggestions(String(learnAsSuggestions !== 'true'))
+                }
+              />
+              <label htmlFor="learn-categories-as-suggestions">
+                <Trans>
+                  Create new automatic rules as suggestions, so a category is
+                  proposed for review instead of set
+                </Trans>
+              </label>
+            </View>
+          )}
         </>
       )}
     </Modal>

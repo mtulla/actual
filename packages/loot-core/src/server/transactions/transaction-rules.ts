@@ -23,6 +23,7 @@ import {
   rankRules,
   Rule,
   RuleIndexer,
+  setSuggestActionsEnabled,
 } from '#server/rules';
 import {
   collectFormulasFromActions,
@@ -330,11 +331,24 @@ export async function getCompletedScheduleRuleIds(): Promise<Set<string>> {
 // Runner
 const NULLABLE_RULE_FIELDS = ['payee', 'category'] as const;
 
+async function isPrefOn(id: string) {
+  const row = await db.first<{ value: string }>(
+    'SELECT value FROM preferences WHERE id = ?',
+    [id],
+  );
+  return row?.value === 'true';
+}
+
+async function loadSuggestActionsFlag() {
+  setSuggestActionsEnabled(await isPrefOn('flags.transactionSuggestions'));
+}
+
 export async function runRules(
   trans,
   accounts: Map<string, db.DbAccount> | null = null,
 ) {
   await ensureFormulaPreferencesLoaded();
+  await loadSuggestActionsFlag();
 
   let accountsMap: Map<string, db.DbAccount> = null;
   if (accounts === null) {
@@ -806,6 +820,7 @@ export async function applyActions(
   actions: Array<Action | RuleActionEntity>,
 ) {
   await ensureFormulaPreferencesLoaded();
+  await loadSuggestActionsFlag();
 
   const parsedActions = actions
     .map(action => {
@@ -900,7 +915,8 @@ function* getIsSetterRules(
     if (
       rule.stage === stage &&
       rule.actions.length === 1 &&
-      rule.actions[0].op === 'set' &&
+      // A learned rule may have been created as a suggestion
+      (rule.actions[0].op === 'set' || rule.actions[0].op === 'suggest') &&
       rule.actions[0].field === actionField &&
       (actionValue === undefined || rule.actions[0].value === actionValue) &&
       rule.conditions.length === 1 &&
@@ -998,6 +1014,15 @@ export function getProbableCategory(transactions) {
   return winner.score >= 3 ? winner.category : null;
 }
 
+// Learned rules suggest the category instead of setting it when the user
+// opted in, and only while the experimental feature is on
+async function getLearnedRuleOp(): Promise<'set' | 'suggest'> {
+  return (await isPrefOn('flags.transactionSuggestions')) &&
+    (await isPrefOn('learn-categories-as-suggestions'))
+    ? 'suggest'
+    : 'set';
+}
+
 export async function updateCategoryRules(transactions) {
   if (transactions.length === 0) {
     return;
@@ -1051,6 +1076,7 @@ export async function updateCategoryRules(transactions) {
     }
   }
 
+  const learnedRuleOp = await getLearnedRuleOp();
   await batchMessages(async () => {
     for (const [payeeId, category] of categoriesToSet.entries()) {
       const ruleSetters = [
@@ -1087,7 +1113,7 @@ export async function updateCategoryRules(transactions) {
           stage: null,
           conditionsOp: 'and',
           conditions: [{ op: 'is', field: 'payee', value: payeeId }],
-          actions: [{ op: 'set', field: 'category', value: category }],
+          actions: [{ op: learnedRuleOp, field: 'category', value: category }],
         });
         await insertRule(newRule.serialize());
       }
