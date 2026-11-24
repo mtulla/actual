@@ -1231,6 +1231,17 @@ describe('Transaction rules', () => {
     expect(inflowCond.eval({ amount: 0 })).toBe(true);
   });
 
+  test('has_suggestions matches transactions with pending suggestions', async () => {
+    expect(
+      conditionsToAQL([{ field: 'has_suggestions', op: 'is', value: true }])
+        .filters,
+    ).toStrictEqual([{ suggestions: { $ne: null } }]);
+    expect(
+      conditionsToAQL([{ field: 'has_suggestions', op: 'is', value: false }])
+        .filters,
+    ).toStrictEqual([{ suggestions: { $eq: null } }]);
+  });
+
   test('and sub expression builds $and condition', async () => {
     const conds = [{ field: 'category', op: 'is', value: null }];
     const { filters } = conditionsToAQL(conds);

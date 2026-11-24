@@ -84,6 +84,7 @@ const FIELD_INFO = {
   reconciled: { type: 'boolean' },
   saved: { type: 'saved' },
   transfer: { type: 'boolean' },
+  has_suggestions: { type: 'boolean' },
   parent: { type: 'boolean' },
 } as const satisfies FieldInfoConstraint;
 

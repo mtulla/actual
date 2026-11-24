@@ -253,6 +253,7 @@ export function ReportTopbar({
                   'cleared',
                   'reconciled',
                   'transfer',
+                  'has_suggestions',
                   'saved',
                 ]
               : []

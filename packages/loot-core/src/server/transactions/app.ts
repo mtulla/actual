@@ -76,11 +76,17 @@ type SuggestionsArgs = {
 // Ids of the payees and categories that still exist, so accepting never
 // writes a deleted one onto a transaction.
 async function getLiveIds(transactions: TransactionEntity[]) {
-  const values = transactions.flatMap(t =>
-    [t.suggestions?.payee?.value, t.suggestions?.category?.value].filter(
-      (v): v is string => v != null,
+  // Deduped: a big selection mostly suggests the same few payees and
+  // categories, and SQLite limits the number of bound parameters
+  const values = [
+    ...new Set(
+      transactions.flatMap(t =>
+        [t.suggestions?.payee?.value, t.suggestions?.category?.value].filter(
+          (v): v is string => v != null,
+        ),
+      ),
     ),
-  );
+  ];
   if (values.length === 0) {
     return new Set<string>();
   }
@@ -106,7 +112,27 @@ async function acceptSuggestions({
 > {
   const transactions = await getTransactionsWithSuggestions(ids);
 
-  const reconciledIds = transactions.filter(t => t.reconciled).map(t => t.id);
+  // A new payee on a transfer also rewrites the other leg, so a reconciled
+  // other leg needs confirmation too
+  const transferIds = transactions
+    .filter(t => t.transfer_id && t.suggestions?.payee)
+    .map(t => t.transfer_id);
+  const { data: reconciledLegs } = transferIds.length
+    ? await aqlQuery(
+        q('transactions')
+          .filter({ id: { $oneof: transferIds }, reconciled: true })
+          .select('id'),
+      )
+    : { data: [] };
+  const reconciledLegIds = new Set(
+    (reconciledLegs as Pick<TransactionEntity, 'id'>[]).map(t => t.id),
+  );
+  const reconciledIds = transactions
+    .filter(
+      t =>
+        t.reconciled || (t.transfer_id && reconciledLegIds.has(t.transfer_id)),
+    )
+    .map(t => t.id);
   if (reconciledIds.length > 0 && !allowReconciled) {
     return { status: 'needs-confirmation', reconciledIds };
   }
