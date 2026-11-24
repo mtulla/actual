@@ -38,6 +38,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 import { AuthProvider } from '#auth/AuthProvider';
 import { SchedulesProvider } from '#hooks/useCachedSchedules';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { SelectedProviderWithItems } from '#hooks/useSelected';
 import { SplitsExpandedProvider } from '#hooks/useSplitsExpanded';
 import { SpreadsheetProvider } from '#hooks/useSpreadsheet';
@@ -903,6 +904,95 @@ describe('Transactions', () => {
     // Blur the input to make it stop editing
     await userEvent.tab();
     expect(getTransactions()[2].notes).toBe('another happy note');
+  });
+
+  describe('suggestions', () => {
+    beforeEach(() => {
+      vi.mocked(useFeatureFlag).mockReturnValue(true);
+    });
+    afterEach(() => {
+      vi.mocked(useFeatureFlag).mockReturnValue(false);
+    });
+
+    function renderWithSuggestions() {
+      const categoryId = categoryGroups[1].categories?.[0].id ?? '';
+      const transactions = generateTransactions(5, [6]);
+      transactions[2] = {
+        ...transactions[2],
+        notes: 'old note',
+        reconciled: false,
+        suggestions: {
+          notes: { value: 'new note', source: 'api' },
+          category: { value: categoryId, source: 'rule' },
+        },
+      };
+      return { categoryId, ...renderTransactions({ transactions }) };
+    }
+
+    test('show next to the current value and can be accepted', async () => {
+      const { container, categoryId, getTransactions } =
+        renderWithSuggestions();
+      expect(queryField(container, 'notes', 'div', 2).textContent).toBe(
+        'old notenew note',
+      );
+
+      await userEvent.click(
+        screen.getByRole('button', { name: /^Accept suggestions/ }),
+      );
+      expect(getTransactions()[2]).toMatchObject({
+        notes: 'new note',
+        category: categoryId,
+        suggestions: null,
+      });
+    });
+
+    test('can be dismissed', async () => {
+      const { getTransactions } = renderWithSuggestions();
+      await userEvent.click(
+        screen.getByRole('button', { name: /^Dismiss suggestions/ }),
+      );
+      expect(getTransactions()[2]).toMatchObject({
+        notes: 'old note',
+        suggestions: null,
+      });
+    });
+
+    test('a suggested payee that was deleted is not shown, and accept drops it', async () => {
+      const transactions = generateTransactions(5, [6]);
+      const payee = transactions[2].payee;
+      transactions[2] = {
+        ...transactions[2],
+        reconciled: false,
+        suggestions: { payee: { value: 'deleted-payee', source: 'api' } },
+      };
+      const { container, getTransactions } = renderTransactions({
+        transactions,
+      });
+      expect(
+        queryField(container, 'payee', 'div', 2).querySelector(
+          '[style*="line-through"]',
+        ),
+      ).toBeNull();
+
+      await userEvent.click(
+        screen.getByRole('button', { name: /^Accept suggestions/ }),
+      );
+      expect(getTransactions()[2]).toMatchObject({ payee, suggestions: null });
+    });
+
+    test('editing a field by hand replaces only its suggestion', async () => {
+      const { container, categoryId, getTransactions } =
+        renderWithSuggestions();
+      const input = await editField(container, 'notes', 2);
+      await userEvent.clear(input);
+      await userEvent.type(input, 'typed note[Tab]');
+      expect(getTransactions()[2]).toMatchObject({
+        notes: 'typed note',
+        suggestions: {
+          category: { value: categoryId, source: 'rule' },
+        },
+      });
+    });
   });
 
   test('a note with line breaks is not changed by focusing it', async () => {

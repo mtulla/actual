@@ -11,6 +11,7 @@ import {
   useState,
 } from 'react';
 import type {
+  ComponentProps,
   CSSProperties,
   ForwardedRef,
   KeyboardEvent,
@@ -52,6 +53,10 @@ import { memoizeOne } from '@actual-app/core/shared/memoize';
 import * as monthUtils from '@actual-app/core/shared/months';
 import { q } from '@actual-app/core/shared/query';
 import { DEFAULT_UPCOMING_SCHEDULE_DAYS } from '@actual-app/core/shared/schedules';
+import {
+  buildAcceptDiff,
+  removeSuggestions,
+} from '@actual-app/core/shared/suggestions';
 import {
   addSplitTransaction,
   deleteTransaction,
@@ -125,6 +130,7 @@ import type {
   OnDragChangeCallback,
   OnDropCallback,
 } from '#hooks/useDragDrop';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useLocalPref } from '#hooks/useLocalPref';
 import { useMergedRefs } from '#hooks/useMergedRefs';
 import { usePrevious } from '#hooks/usePrevious';
@@ -148,6 +154,8 @@ import {
   isFutureTransaction,
 } from '#util/schedule-actions';
 
+import { SuggestedValue } from './SuggestedValue';
+import { SuggestionActions } from './SuggestionActions';
 import {
   isTransactionTableColumnAvailableInChildRows,
   isTransactionTableColumnDisplayOnly,
@@ -641,6 +649,7 @@ type PayeeCellProps = {
   valueStyle: CSSProperties | null;
   transaction: SerializedTransaction;
   importedPayee?: PayeeEntity['id'];
+  suggestedPayee?: string;
   isPreview: boolean;
   onEdit: TransactionEditFunction;
   onUpdate: TransactionUpdateFunction;
@@ -660,6 +669,7 @@ function PayeeCell({
   valueStyle,
   transaction,
   importedPayee,
+  suggestedPayee,
   isPreview,
   onEdit,
   onUpdate,
@@ -801,6 +811,11 @@ function PayeeCell({
         }
       }}
       formatter={() => {
+        if (suggestedPayee != null) {
+          return (
+            <SuggestedValue current={displayPayee} suggested={suggestedPayee} />
+          );
+        }
         if (!displayPayee && isPreview) {
           return t('(No payee)');
         }
@@ -1246,8 +1261,81 @@ const Transaction = memo(function Transaction({
     }
   };
 
+  // Accepting or dismissing saves through the same path as an edit, so the
+  // row updates in place and the change can be undone.
+  const saveSuggestionChange = (changes: Partial<TransactionEntity>) => {
+    const deserialized = deserializeTransaction(
+      { ...transaction, ...changes, debit: '', credit: '' },
+      originalTransaction,
+    );
+    setTransaction(serializeTransaction(deserialized, showZeroInDeposit));
+    onSave(deserialized, subtransactions, 'suggestions');
+  };
+
+  const onAcceptSuggestions = async () => {
+    const accept = () =>
+      saveSuggestionChange(
+        buildAcceptDiff(transaction, undefined, (field, value) => {
+          if (field === 'notes') {
+            return true;
+          }
+          // Skip a payee or category deleted since it was suggested, and
+          // categories on off-budget rows. A category on a transfer is
+          // cleared by the server if the row is still a transfer after this.
+          return field === 'payee'
+            ? !!getPayeesById(payees)[value]
+            : !isOffBudget && !!getCategoriesById(categoryGroups)[value];
+        }),
+      );
+    const confirm = (
+      confirmReason: 'editReconciled' | 'batchEditWithReconciledTransfer',
+    ) =>
+      dispatch(
+        pushModal({
+          modal: {
+            name: 'confirm-transaction-edit',
+            options: { onConfirm: accept, confirmReason },
+          },
+        }),
+      );
+
+    if (transaction.reconciled) {
+      confirm('editReconciled');
+      return;
+    }
+    // A new payee is written to the other leg of a transfer too
+    const suggestedPayeeId = transaction.suggestions?.payee?.value;
+    if (
+      transaction.transfer_id &&
+      suggestedPayeeId &&
+      suggestedPayeeId !== transaction.payee &&
+      getPayeesById(payees)[suggestedPayeeId]
+    ) {
+      const { data } = await aqlQuery(
+        q('transactions')
+          .filter({ id: transaction.transfer_id, reconciled: true })
+          .select('id'),
+      );
+      if ((data as TransactionEntity[]).length > 0) {
+        confirm('batchEditWithReconciledTransfer');
+        return;
+      }
+    }
+    accept();
+  };
+
   const onUpdateAfterConfirm: TransactionUpdateFunction = (name, value) => {
     const newTransaction = { ...transaction, [name]: value };
+
+    // Editing a field by hand replaces its suggestion
+    const suggestedField = (['payee', 'notes', 'category'] as const).find(
+      field => field === name,
+    );
+    if (suggestedField && transaction.suggestions?.[suggestedField]) {
+      newTransaction.suggestions = removeSuggestions(transaction.suggestions, [
+        suggestedField,
+      ]);
+    }
 
     // Don't change the note to an empty string if it's null (since they are both rendered the same)
     if (name === 'notes' && value === '' && transaction.notes == null) {
@@ -1378,6 +1466,18 @@ const Transaction = memo(function Transaction({
   // Join in some data
   const payee =
     (payees && payeeId && getPayeesById(payees)[payeeId]) || undefined;
+
+  // Split parents and their suggestions are handled separately
+  const suggestions =
+    useFeatureFlag('transactionSuggestions') && !isPreview && !isParent
+      ? transaction.suggestions
+      : null;
+  // Undefined when the suggested payee or category was deleted since
+  const suggestedPayee =
+    suggestions?.payee && getPayeesById(payees)[suggestions.payee.value]?.name;
+  const suggestedCategory =
+    suggestions?.category &&
+    getCategoriesById(categoryGroups)[suggestions.category.value]?.name;
   const account = accounts && accountId && getAccountsById(accounts)[accountId];
 
   const isChild = transaction.is_child;
@@ -1387,6 +1487,21 @@ const Transaction = memo(function Transaction({
       : transferAccountsByTransaction[id];
   const isBudgetTransfer = transferAcct && transferAcct.offbudget === 0;
   const isOffBudget = account && account.offbudget === 1;
+
+  // shortcut: the buttons live in the category cell, so they are gone when
+  // that column is hidden; bulk actions cover it, add a row-level spot if not
+  const suggestionsContent = suggestions
+    ? (props: ComponentProps<typeof UnexposedCellContent>) => (
+        <>
+          <UnexposedCellContent {...props} />
+          <SuggestionActions
+            payee={payee?.name}
+            onAccept={onAcceptSuggestions}
+            onDismiss={() => saveSuggestionChange({ suggestions: null })}
+          />
+        </>
+      )
+    : undefined;
 
   const valueStyle = added
     ? { fontWeight: 600, color: theme.tableTextItemAdded }
@@ -1764,6 +1879,7 @@ const Transaction = memo(function Transaction({
             transaction={transaction}
             transferAccountsByTransaction={transferAccountsByTransaction}
             importedPayee={importedPayee}
+            suggestedPayee={suggestedPayee}
             isPreview={isPreview}
             onEdit={onEdit}
             onUpdate={onUpdate}
@@ -1779,6 +1895,7 @@ const Transaction = memo(function Transaction({
             key={columnId}
             note={notes ?? ''}
             scheduleNote={isPreview ? schedule?.name : null}
+            suggestedNote={suggestions?.notes?.value}
             focused={focusedField === 'notes'}
             valueStyle={valueStyle}
             isReadOnly={isPreview}
@@ -1933,6 +2050,7 @@ const Transaction = memo(function Transaction({
               readOnly: true,
               style: { fontStyle: 'italic' },
             }}
+            unexposedContent={suggestionsContent}
           />
         ) : (
           <CustomCell
@@ -1942,17 +2060,25 @@ const Transaction = memo(function Transaction({
             width="flex"
             textAlign="flex"
             value={categoryId}
-            formatter={value =>
-              value
+            formatter={value => {
+              const name = value
                 ? (getCategoriesById(categoryGroups)[value]?.name ?? '')
-                : transaction.id
-                  ? t('Categorize')
-                  : ''
-            }
+                : '';
+              if (suggestedCategory != null) {
+                return (
+                  <SuggestedValue
+                    current={name}
+                    suggested={suggestedCategory}
+                  />
+                );
+              }
+              return value ? name : transaction.id ? t('Categorize') : '';
+            }}
+            unexposedContent={suggestionsContent}
             exposed={focusedField === 'category'}
             onExpose={name => !isPreview && onEdit(id, name)}
             valueStyle={
-              !categoryId
+              !categoryId && !suggestedCategory
                 ? {
                     // uncategorized transaction
                     fontStyle: 'italic',
@@ -2272,6 +2398,7 @@ const Transaction = memo(function Transaction({
 type NotesCellProps = {
   note: string;
   scheduleNote: string | null | undefined;
+  suggestedNote?: string;
   focused: boolean;
   valueStyle: CSSProperties | null;
   isReadOnly: boolean;
@@ -2283,6 +2410,7 @@ type NotesCellProps = {
 function NotesCell({
   note,
   scheduleNote,
+  suggestedNote,
   focused,
   valueStyle,
   isReadOnly,
@@ -2344,13 +2472,21 @@ function NotesCell({
       name="notes"
       value={displayedNote}
       valueStyle={valueStyle}
-      formatter={value =>
-        NotesTagFormatter({
+      formatter={value => {
+        const formatted = NotesTagFormatter({
           notes: value,
           onNotesTagClick: onClickTag,
           onNotesChange,
-        })
-      }
+        });
+        return suggestedNote != null ? (
+          <SuggestedValue
+            current={value && formatted}
+            suggested={suggestedNote}
+          />
+        ) : (
+          formatted
+        );
+      }}
       focused={focused}
       exposed={focused}
       onExpose={onExpose}
