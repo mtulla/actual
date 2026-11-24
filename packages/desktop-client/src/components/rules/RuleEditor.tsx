@@ -570,12 +570,9 @@ function ActionEditor({
   const isFormulaEnabled = formulaMode || hasFormula;
 
   const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
-  // Split suggestions are not supported yet
   const ops: Array<typeof op> = [
     'set',
-    ...((isSuggestionsEnabled && !options?.splitIndex) || op === 'suggest'
-      ? (['suggest'] as const)
-      : []),
+    ...(isSuggestionsEnabled || op === 'suggest' ? (['suggest'] as const) : []),
     'prepend-notes',
     'append-notes',
     'delete-transaction',

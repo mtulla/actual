@@ -11,7 +11,11 @@ import {
 } from '#shared/errors';
 import * as monthUtils from '#shared/months';
 import { q } from '#shared/query';
-import { mergeSuggestions, validateSuggestions } from '#shared/suggestions';
+import {
+  mergeSuggestions,
+  splitTotal,
+  validateSuggestions,
+} from '#shared/suggestions';
 import {
   deleteTransaction,
   ungroupTransactions,
@@ -692,41 +696,80 @@ async function validateApiSuggestions(
     throw APIError(e.message);
   }
 
-  const { payee, category } = suggestions ?? {};
-  if (payee) {
-    const row = await db.getPayee(payee.value);
-    if (!row || row.tombstone) {
-      throw APIError(
-        `Invalid suggestion: payee does not exist: ${payee.value}`,
-      );
+  const { payee, category, split } = suggestions ?? {};
+  const payeeIds = [payee?.value, ...(split?.value ?? []).map(c => c.payee)];
+  const categoryIds = [
+    category?.value,
+    ...(split?.value ?? []).map(c => c.category),
+  ];
+  for (const id of new Set(payeeIds)) {
+    const row = id ? await db.getPayee(id) : null;
+    if (id && (!row || row.tombstone)) {
+      throw APIError(`Invalid suggestion: payee does not exist: ${id}`);
     }
   }
-  if (category) {
-    const row = await db.getCategory(category.value);
-    if (!row || row.tombstone) {
-      throw APIError(
-        `Invalid suggestion: category does not exist: ${category.value}`,
-      );
+  for (const id of new Set(categoryIds)) {
+    const row = id ? await db.getCategory(id) : null;
+    if (id && (!row || row.tombstone)) {
+      throw APIError(`Invalid suggestion: category does not exist: ${id}`);
     }
   }
   return suggestions;
 }
 
-async function withValidSuggestions<T extends object>(
+// A split suggestion has to fit its transaction: unsplit, and adding up to
+// its amount
+type SplitTarget = {
+  amount?: number;
+  is_parent?: boolean;
+  is_child?: boolean;
+  subtransactions?: unknown[];
+};
+
+function checkSplitFits(
+  transaction: SplitTarget,
+  suggestions: TransactionSuggestions | null | undefined,
+) {
+  const split = suggestions?.split?.value;
+  if (!split) {
+    return;
+  }
+  if (
+    transaction.is_parent ||
+    transaction.is_child ||
+    transaction.subtransactions?.length
+  ) {
+    throw APIError('Only an unsplit transaction can get a split suggestion');
+  }
+  if (splitTotal(split) !== transaction.amount) {
+    throw APIError(
+      'Invalid suggestion: the split amounts must add up to the transaction amount',
+    );
+  }
+}
+
+async function withValidSuggestions<T extends SplitTarget>(
   transactions: T[],
+  { checkSplit = true }: { checkSplit?: boolean } = {},
 ): Promise<T[]> {
   return Promise.all(
     transactions.map(async t => {
       if (
-        'subtransactions' in t &&
         Array.isArray(t.subtransactions) &&
-        t.subtransactions.some(sub => sub && 'suggestions' in sub)
+        t.subtransactions.some(
+          sub => sub != null && typeof sub === 'object' && 'suggestions' in sub,
+        )
       ) {
         throw APIError('Suggestions are not supported on split children');
       }
-      return 'suggestions' in t
-        ? { ...t, suggestions: await validateApiSuggestions(t.suggestions) }
-        : t;
+      if (!('suggestions' in t)) {
+        return t;
+      }
+      const suggestions = await validateApiSuggestions(t.suggestions);
+      if (checkSplit) {
+        checkSplitFits(t, suggestions);
+      }
+      return { ...t, suggestions };
     }),
   );
 }
@@ -813,12 +856,14 @@ handlers['api/transaction-update'] = withMutation(async function ({
       JSON.stringify(existing.suggestions ?? null);
   const [validFields] = unchanged
     ? [{ ...fields, suggestions: existing.suggestions }]
-    : await withValidSuggestions([fields]);
+    : await withValidSuggestions([fields], { checkSplit: false });
   // `fields` is partial; updateTransaction replaces a split child wholesale
-  const { diff } = updateTransaction(transactions, {
-    ...existing,
-    ...validFields,
-  });
+  const updated = { ...existing, ...validFields };
+  // A changed amount can leave a split stale; accept reports that later
+  if ('suggestions' in fields && !unchanged) {
+    checkSplitFits(updated, updated.suggestions);
+  }
+  const { diff } = updateTransaction(transactions, updated);
   return (await handlers['transactions-batch-update'](diff))['updated'];
 });
 
@@ -832,12 +877,13 @@ handlers['api/transaction-suggest'] = withMutation(async function ({
   const { data } = await aqlQuery(
     q('transactions')
       .filter({ id })
-      .select(['id', 'suggestions'])
+      .select(['id', 'suggestions', 'amount', 'is_parent', 'is_child'])
       .options({ splits: 'all' }),
   );
   if (data.length === 0) {
     throw APIError('Transaction not found: ' + id);
   }
+  const [transaction] = data;
 
   const incoming = await validateApiSuggestions(
     Object.fromEntries(
@@ -851,11 +897,12 @@ handlers['api/transaction-suggest'] = withMutation(async function ({
       ]),
     ),
   );
+  checkSplitFits(transaction, incoming);
   // Merge instead of replace, so suggestions from rules or other tools on
   // other fields are kept.
   await handlers['transactions-batch-update']({
     updated: [
-      { id, suggestions: mergeSuggestions(data[0].suggestions, incoming) },
+      { id, suggestions: mergeSuggestions(transaction.suggestions, incoming) },
     ],
   });
 });

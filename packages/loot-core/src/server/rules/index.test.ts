@@ -775,6 +775,52 @@ describe('Rule', () => {
   });
 
   describe('split actions', () => {
+    test('a split of suggest actions is stored as a suggestion', () => {
+      const rule = new Rule({
+        id: 'rule-1',
+        conditionsOp: 'and',
+        conditions: [{ op: 'is', field: 'payee', value: '123' }],
+        actions: [
+          {
+            op: 'set-split-amount',
+            value: 100,
+            options: { splitIndex: 1, method: 'fixed-amount' },
+          },
+          {
+            op: 'suggest',
+            field: 'category',
+            value: 'food',
+            options: { splitIndex: 1 },
+          },
+          {
+            op: 'set-split-amount',
+            value: null,
+            options: { splitIndex: 2, method: 'remainder' },
+          },
+          {
+            op: 'suggest',
+            field: 'category',
+            value: 'fun',
+            options: { splitIndex: 2 },
+          },
+        ],
+      });
+
+      const result = rule.apply({ id: 't', payee: '123', amount: 300 });
+      expect(result.is_parent).toBeFalsy();
+      expect(result.subtransactions).toBeUndefined();
+      expect(result.suggestions).toEqual({
+        split: {
+          value: [
+            { amount: 100, category: 'food' },
+            { amount: 200, category: 'fun' },
+          ],
+          source: 'rule',
+          source_id: 'rule-1',
+        },
+      });
+    });
+
     test('splits can change the payee', () => {
       const rule = new Rule({
         conditionsOp: 'and',

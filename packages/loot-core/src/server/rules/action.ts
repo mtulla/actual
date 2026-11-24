@@ -42,6 +42,9 @@ let suggestActionsEnabled = true;
 export function setSuggestActionsEnabled(enabled: boolean) {
   suggestActionsEnabled = enabled;
 }
+export function areSuggestActionsEnabled() {
+  return suggestActionsEnabled;
+}
 
 // Transaction fields stored as integers that a formula reads as the amounts
 // shown in the app.
@@ -139,6 +142,11 @@ export class Action {
         },
       });
     }
+  }
+
+  // Runs a `suggest` action like `set`, for building a suggested split
+  execAsSet(object) {
+    this.execOp(this.op === 'suggest' ? 'set' : this.op, object);
   }
 
   private execOp(op: ActionOperator, object) {

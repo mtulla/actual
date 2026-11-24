@@ -154,6 +154,11 @@ import {
   isFutureTransaction,
 } from '#util/schedule-actions';
 
+import {
+  isSuggestedSplitId,
+  SuggestedSplitRow,
+  withSuggestedSplitRows,
+} from './SuggestedSplitRow';
 import { SuggestedValue } from './SuggestedValue';
 import { SuggestionActions } from './SuggestionActions';
 import {
@@ -1273,20 +1278,32 @@ const Transaction = memo(function Transaction({
   };
 
   const onAcceptSuggestions = async () => {
-    const accept = () =>
-      saveSuggestionChange(
-        buildAcceptDiff(transaction, undefined, (field, value) => {
-          if (field === 'notes') {
-            return true;
-          }
-          // Skip a payee or category deleted since it was suggested, and
-          // categories on off-budget rows. A category on a transfer is
-          // cleared by the server if the row is still a transfer after this.
-          return field === 'payee'
-            ? !!getPayeesById(payees)[value]
-            : !isOffBudget && !!getCategoriesById(categoryGroups)[value];
-        }),
-      );
+    const accept = () => {
+      const diff = buildAcceptDiff(transaction, undefined, (field, value) => {
+        if (field === 'notes') {
+          return true;
+        }
+        // Skip a payee or category deleted since it was suggested, and
+        // categories on off-budget rows. A category on a transfer is
+        // cleared by the server if the row is still a transfer after this.
+        return field === 'payee'
+          ? !!getPayeesById(payees)[value]
+          : !isOffBudget && !!getCategoriesById(categoryGroups)[value];
+      });
+      if (diff.suggestions?.split) {
+        dispatch(
+          addNotification({
+            notification: {
+              type: 'error',
+              message: t(
+                "The suggested split no longer adds up to this transaction's amount, so it was not applied.",
+              ),
+            },
+          }),
+        );
+      }
+      saveSuggestionChange(diff);
+    };
     const confirm = (
       confirmReason: 'editReconciled' | 'batchEditWithReconciledTransfer',
     ) =>
@@ -1303,13 +1320,15 @@ const Transaction = memo(function Transaction({
       confirm('editReconciled');
       return;
     }
-    // A new payee is written to the other leg of a transfer too
+    // A new payee is written to the other leg of a transfer too, and
+    // splitting a transfer replaces the other leg
     const suggestedPayeeId = transaction.suggestions?.payee?.value;
     if (
       transaction.transfer_id &&
-      suggestedPayeeId &&
-      suggestedPayeeId !== transaction.payee &&
-      getPayeesById(payees)[suggestedPayeeId]
+      ((suggestedPayeeId &&
+        suggestedPayeeId !== transaction.payee &&
+        getPayeesById(payees)[suggestedPayeeId]) ||
+        transaction.suggestions?.split)
     ) {
       const { data } = await aqlQuery(
         q('transactions')
@@ -2064,6 +2083,15 @@ const Transaction = memo(function Transaction({
               const name = value
                 ? (getCategoriesById(categoryGroups)[value]?.name ?? '')
                 : '';
+              const splitCount = suggestions?.split?.value.length;
+              if (splitCount) {
+                return (
+                  <SuggestedValue
+                    current={name}
+                    suggested={t('Split into {{count}}', { count: splitCount })}
+                  />
+                );
+              }
               if (suggestedCategory != null) {
                 return (
                   <SuggestedValue
@@ -2078,7 +2106,7 @@ const Transaction = memo(function Transaction({
             exposed={focusedField === 'category'}
             onExpose={name => !isPreview && onEdit(id, name)}
             valueStyle={
-              !categoryId && !suggestedCategory
+              !categoryId && !suggestedCategory && !suggestions?.split
                 ? {
                     // uncategorized transaction
                     fontStyle: 'italic',
@@ -2964,6 +2992,24 @@ function TransactionTableInner({
     } = props;
 
     const trans = item;
+    if (isSuggestedSplitId(trans.id)) {
+      return (
+        <SuggestedSplitRow
+          columns={columns}
+          amountColumnWidths={amountColumnWidths}
+          amount={trans.amount}
+          payeeName={
+            trans.payee ? getPayeesById(payees)[trans.payee]?.name : ''
+          }
+          categoryName={
+            trans.category
+              ? getCategoriesById(categoryGroups)[trans.category]?.name
+              : ''
+          }
+          notes={trans.notes ?? ''}
+        />
+      );
+    }
     const selected = selectedItems.has(trans.id);
 
     const parent = trans.parent_id && props.transactionMap.get(trans.parent_id);
@@ -3006,7 +3052,12 @@ function TransactionTableInner({
     const findPrevReorderableDate = (): string | null => {
       for (let i = index - 1; i >= 0; i--) {
         const row = transactionsToRender[i];
-        if (row && !row.is_child && !isPreviewId(row.id)) {
+        if (
+          row &&
+          !row.is_child &&
+          !isPreviewId(row.id) &&
+          !isSuggestedSplitId(row.id)
+        ) {
           return row.date ?? null;
         }
       }
@@ -3015,7 +3066,12 @@ function TransactionTableInner({
     const findNextReorderableDate = (): string | null => {
       for (let i = index + 1; i < transactionsToRender.length; i++) {
         const row = transactionsToRender[i];
-        if (row && !row.is_child && !isPreviewId(row.id)) {
+        if (
+          row &&
+          !row.is_child &&
+          !isPreviewId(row.id) &&
+          !isSuggestedSplitId(row.id)
+        ) {
           return row.date ?? null;
         }
       }
@@ -3391,6 +3447,7 @@ export const TransactionTable = forwardRef(
     ) as RefObject<HTMLDivElement>;
     const mergedRef = useMergedRefs(tableRef, ref);
 
+    const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
     const transactionsWithExpandedSplits = useMemo(() => {
       let result: TransactionEntity[];
 
@@ -3427,8 +3484,13 @@ export const TransactionTable = forwardRef(
       }
 
       prevSplitsExpanded.current = splitsExpanded;
-      return result;
-    }, [prevSplitsExpanded, props.transactions, splitsExpanded]);
+      return isSuggestionsEnabled ? withSuggestedSplitRows(result) : result;
+    }, [
+      prevSplitsExpanded,
+      props.transactions,
+      splitsExpanded,
+      isSuggestionsEnabled,
+    ]);
 
     const transactionMap = useMemo(() => {
       return new Map(
@@ -3774,6 +3836,10 @@ export const TransactionTable = forwardRef(
 
       if (item?.id && isPreviewId(item.id)) {
         fields = ['select'];
+      }
+      if (item?.id && isSuggestedSplitId(item.id)) {
+        // Read-only preview of a suggested split part
+        fields = [];
       }
       if (item?.id && isTemporaryId(item.id)) {
         // You can't focus the select/delete button of temporary

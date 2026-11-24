@@ -110,7 +110,68 @@ describe('suggestions', () => {
       'a value that is too long',
       { notes: { value: 'x'.repeat(1001), source: 'api' } },
     ],
+    [
+      'a split with one part',
+      { split: { value: [{ amount: 1 }], source: 'api' } },
+    ],
+    [
+      'a split with a fractional amount',
+      { split: { value: [{ amount: 1.5 }, { amount: 2 }], source: 'api' } },
+    ],
   ])('validate rejects %s', (_, input) => {
     expect(() => validateSuggestions(input)).toThrow('Invalid suggestion');
+  });
+
+  describe('split', () => {
+    const split = {
+      value: [{ amount: -100, category: 'food' }, { amount: -50 }],
+      source: 'api' as const,
+    };
+
+    test('accept turns a matching split into subtransactions', () => {
+      expect(
+        buildAcceptDiff({
+          id: 't',
+          amount: -150,
+          is_parent: false,
+          suggestions: {
+            split,
+            category: { value: 'fun', source: 'rule' },
+          },
+        }),
+      ).toEqual({
+        id: 't',
+        suggestions: null,
+        subtransactions: [{ amount: -100, category: 'food' }, { amount: -50 }],
+      });
+    });
+
+    test('accept leaves a split pending when the amount changed', () => {
+      expect(
+        buildAcceptDiff({
+          id: 't',
+          amount: -200,
+          is_parent: false,
+          suggestions: { split },
+        }),
+      ).toEqual({ id: 't', suggestions: { split } });
+    });
+
+    test('accept drops a split on a row that is already split', () => {
+      expect(
+        buildAcceptDiff({
+          id: 't',
+          amount: -150,
+          is_parent: true,
+          suggestions: { split },
+        }),
+      ).toEqual({ id: 't', suggestions: null });
+    });
+
+    test('validate keeps the split parts', () => {
+      expect(
+        validateSuggestions({ split: { ...split, source: 'rule' } }),
+      ).toEqual({ split: { ...split, source: 'rule' } });
+    });
   });
 });

@@ -731,10 +731,11 @@ export async function reconcileTransactions(
         : null;
       const fromImport = match.imported_id
         ? null
-        : removeSuggestions(
-            trans.suggestions,
-            SIMPLE_FIELDS.filter(field => existing[field]),
-          );
+        : removeSuggestions(trans.suggestions, [
+            ...SIMPLE_FIELDS.filter(field => existing[field]),
+            // An already split row can't take a suggested split
+            ...(match.is_parent || match.parent_id ? ['split' as const] : []),
+          ]);
       let suggestions = mergeSuggestions(fromImport, existingSuggestions);
       const filled = filledSuggestionFields(suggestions, existing, updates);
       suggestions = removeSuggestions(suggestions, filled);
@@ -1105,7 +1106,16 @@ export async function addTransactions(
       finalTransaction.subtransactions || subtransactions;
     if (updatedSubtransactions && updatedSubtransactions.length > 0) {
       added.push(
-        ...makeSplitTransaction(finalTransaction, updatedSubtransactions),
+        ...makeSplitTransaction(
+          {
+            ...finalTransaction,
+            // It is being split already, so a suggested split is moot
+            suggestions: removeSuggestions(finalTransaction.suggestions, [
+              'split',
+            ]),
+          },
+          updatedSubtransactions,
+        ),
       );
     } else {
       added.push(finalTransaction);

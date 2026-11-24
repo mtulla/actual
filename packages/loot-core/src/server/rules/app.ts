@@ -41,8 +41,18 @@ function validateRule(rule: Partial<RuleEntity>) {
     cond => new Condition(cond.op, cond.field, cond.value, cond.options),
   );
 
-  const actionErrors = runValidation(rule.actions, action =>
-    action.op === 'delete-transaction'
+  // A split is either applied or suggested as a whole
+  const isSplitSetter = (a: RuleActionEntity) =>
+    (a.op === 'set' || a.op === 'suggest') && !!a.options?.splitIndex;
+  const splitOps = new Set(rule.actions.filter(isSplitSetter).map(a => a.op));
+  const actionErrors = runValidation(rule.actions, action => {
+    if (splitOps.size > 1 && isSplitSetter(action)) {
+      throw new RuleError(
+        'mixed-split-ops',
+        'A split cannot mix set and suggest actions',
+      );
+    }
+    return action.op === 'delete-transaction'
       ? new Action(action.op, null, null, null)
       : action.op === 'set-split-amount'
         ? new Action(action.op, null, action.value, action.options)
@@ -50,8 +60,8 @@ function validateRule(rule: Partial<RuleEntity>) {
           ? new Action(action.op, null, action.value, null)
           : action.op === 'prepend-notes' || action.op === 'append-notes'
             ? new Action(action.op, null, action.value, null)
-            : new Action(action.op, action.field, action.value, action.options),
-  );
+            : new Action(action.op, action.field, action.value, action.options);
+  });
 
   if (conditionErrors || actionErrors) {
     return {
