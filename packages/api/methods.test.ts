@@ -1346,6 +1346,32 @@ describe('API CRUD operations', () => {
     expect(b.suggestions).toBeNull();
   });
 
+  test('Transactions: a new payee on a transfer with a reconciled other leg needs confirmation', async () => {
+    const fromId = await api.createAccount({ name: 'suggest-from' }, 0);
+    const toId = await api.createAccount({ name: 'suggest-to' }, 0);
+    const toPayee = (await api.getPayees()).find(p => p.transfer_acct === toId);
+    const payeeId = await api.createPayee({ name: 'Landlord' });
+    await api.addTransactions(
+      fromId,
+      [{ date: '2023-11-05', amount: -10000, payee: toPayee?.id }],
+      { runTransfers: true },
+    );
+    const [transfer] = await api.getTransactions(
+      fromId,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    await api.updateTransaction(transfer.transfer_id ?? '', {
+      reconciled: true,
+    });
+    await api.suggestTransactionChanges(transfer.id, { payee: payeeId });
+
+    expect(await api.acceptSuggestions([transfer.id])).toEqual({
+      status: 'needs-confirmation',
+      reconciledIds: [transfer.id],
+    });
+  });
+
   test('Transactions: invalid suggestions are rejected', async () => {
     const accountId = await api.createAccount({ name: 'invalid-account' }, 0);
     await api.addTransactions(accountId, [{ date: '2023-11-03', amount: -1 }]);

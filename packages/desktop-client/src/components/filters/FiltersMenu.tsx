@@ -44,6 +44,7 @@ import { GenericInput } from '#components/util/GenericInput';
 import { useAccounts } from '#hooks/useAccounts';
 import { useCategories } from '#hooks/useCategories';
 import { useDateFormat } from '#hooks/useDateFormat';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useFormat } from '#hooks/useFormat';
 import { usePayees } from '#hooks/usePayees';
 import { useTransactionFilters } from '#hooks/useTransactionFilters';
@@ -659,8 +660,14 @@ export function FilterButton<T extends RuleConditionEntity>({
   const triggerRef = useRef<HTMLDivElement>(null);
   const dateFormat = useDateFormat() || 'MM/dd/yyyy';
 
+  const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
   const translatedFilterFields = useMemo(() => {
-    const retValue = [...filterFields];
+    const retValue = [
+      ...filterFields,
+      ...(isSuggestionsEnabled
+        ? [['has_suggestions', mapField('has_suggestions')]]
+        : []),
+    ];
 
     if (retValue && retValue.length > 0) {
       retValue.forEach(field => {
@@ -669,7 +676,7 @@ export function FilterButton<T extends RuleConditionEntity>({
     }
 
     return retValue;
-  }, []);
+  }, [isSuggestionsEnabled]);
 
   const [state, dispatch] = useReducer(
     // @ts-expect-error - fix me

@@ -71,6 +71,8 @@ export function mapField(field, opts?) {
       return t('reconciled');
     case 'transfer':
       return t('transfer');
+    case 'has_suggestions':
+      return t('has suggestions');
     default:
       return field;
   }

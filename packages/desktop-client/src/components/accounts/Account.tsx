@@ -853,6 +853,34 @@ class AccountInternal extends PureComponent<
     }
   };
 
+  onAcceptSuggestions = async (ids: string[], allowReconciled = false) => {
+    const result = await send('transactions-accept-suggestions', {
+      ids,
+      allowReconciled,
+    });
+    if (result.status === 'needs-confirmation') {
+      this.props.dispatch(
+        pushModal({
+          modal: {
+            name: 'confirm-transaction-edit',
+            options: {
+              onConfirm: () => void this.onAcceptSuggestions(ids, true),
+              confirmReason: 'batchEditWithReconciled',
+            },
+          },
+        }),
+      );
+      return;
+    }
+    // Keeps the current filter, so reviewed rows drop out of a review list
+    await this.refetchTransactions();
+  };
+
+  onDismissSuggestions = async (ids: string[]) => {
+    await send('transactions-dismiss-suggestions', { ids });
+    await this.refetchTransactions();
+  };
+
   onAddTransaction = () => {
     this.setState({ isAdding: true });
   };
@@ -1976,6 +2004,8 @@ class AccountInternal extends PureComponent<
                 onBatchDelete={this.onBatchDelete}
                 onBatchDuplicate={this.onBatchDuplicate}
                 onRunRules={this.onRunRules}
+                onAcceptSuggestions={this.onAcceptSuggestions}
+                onDismissSuggestions={this.onDismissSuggestions}
                 onBatchEdit={this.onBatchEdit}
                 onBatchLinkSchedule={this.onBatchLinkSchedule}
                 onBatchUnlinkSchedule={this.onBatchUnlinkSchedule}

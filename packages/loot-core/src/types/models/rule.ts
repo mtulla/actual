@@ -28,6 +28,7 @@ export type FieldValueTypes = {
   imported_payee: string;
   saved: string;
   transfer: boolean;
+  has_suggestions: boolean;
   parent: boolean;
   cleared: boolean;
   reconciled: boolean;
@@ -132,7 +133,8 @@ export type RuleConditionEntity =
   | BaseConditionEntity<'saved', 'is'>
   | BaseConditionEntity<'cleared', 'is'>
   | BaseConditionEntity<'reconciled', 'is'>
-  | BaseConditionEntity<'transfer', 'is'>;
+  | BaseConditionEntity<'transfer', 'is'>
+  | BaseConditionEntity<'has_suggestions', 'is'>;
 
 export type RuleActionEntity =
   | SetRuleActionEntity

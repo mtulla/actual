@@ -55,6 +55,7 @@ import type { TableRef } from './Account';
 import { Balances } from './Balance';
 import { BalanceHistoryGraph } from './BalanceHistoryGraph';
 import { ReconcileMenu, ReconcilingMessage } from './Reconcile';
+import { ReviewSuggestionsButton } from './ReviewSuggestionsButton';
 
 type AccountHeaderProps = {
   tableRef: TableRef;
@@ -99,6 +100,12 @@ type AccountHeaderProps = {
   onReconcile: ComponentProps<typeof ReconcileMenu>['onReconcile'];
   onBatchEdit: ComponentProps<typeof SelectedTransactionsButton>['onEdit'];
   onRunRules: ComponentProps<typeof SelectedTransactionsButton>['onRunRules'];
+  onAcceptSuggestions: ComponentProps<
+    typeof SelectedTransactionsButton
+  >['onAcceptSuggestions'];
+  onDismissSuggestions: ComponentProps<
+    typeof SelectedTransactionsButton
+  >['onDismissSuggestions'];
   onBatchDelete: ComponentProps<typeof SelectedTransactionsButton>['onDelete'];
   onBatchDuplicate: ComponentProps<
     typeof SelectedTransactionsButton
@@ -178,6 +185,8 @@ export function AccountHeader({
   onScheduleAction,
   onSetTransfer,
   onRunRules,
+  onAcceptSuggestions,
+  onDismissSuggestions,
   onMakeAsSplitTransaction,
   onMakeAsNonSplitTransactions,
   onMergeTransactions,
@@ -371,6 +380,11 @@ export function AccountHeader({
             {/* @ts-expect-error fix me */}
             <FilterButton onApply={onApplyFilter} />
           </View>
+          <ReviewSuggestionsButton
+            accountId={accountId}
+            showReconciled={showReconciled}
+            onApplyFilter={onApplyFilter}
+          />
           <View style={{ flex: 1 }} />
 
           <Search
@@ -391,6 +405,8 @@ export function AccountHeader({
               onDelete={onBatchDelete}
               onEdit={onBatchEdit}
               onRunRules={onRunRules}
+              onAcceptSuggestions={onAcceptSuggestions}
+              onDismissSuggestions={onDismissSuggestions}
               onLinkSchedule={onBatchLinkSchedule}
               onUnlinkSchedule={onBatchUnlinkSchedule}
               onCreateRule={onCreateRule}

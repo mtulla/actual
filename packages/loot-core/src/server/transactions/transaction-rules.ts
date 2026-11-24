@@ -550,6 +550,11 @@ export function conditionsToAQL(
       } else {
         value = null;
       }
+    } else if (field === 'has_suggestions' && op === 'is') {
+      // Empty suggestions are always stored as null
+      field = 'suggestions';
+      op = value ? 'isNot' : 'is';
+      value = null;
     } else if (field === 'parent' && op === 'is') {
       field = 'is_parent';
       if (value) {

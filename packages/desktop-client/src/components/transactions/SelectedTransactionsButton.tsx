@@ -14,6 +14,7 @@ import { validForTransfer } from '@actual-app/core/shared/transfer';
 import type { TransactionEntity } from '@actual-app/core/types/models';
 
 import { SelectedItemsButton } from '#components/table';
+import { useFeatureFlag } from '#hooks/useFeatureFlag';
 import { useSchedules } from '#hooks/useSchedules';
 import { useSelectedItems } from '#hooks/useSelected';
 import { pushModal } from '#modals/modalsSlice';
@@ -39,6 +40,8 @@ type SelectedTransactionsButtonProps = {
   onUnlinkSchedule: (selectedIds: string[]) => void;
   onCreateRule: (selectedIds: string[]) => void;
   onRunRules: (selectedIds: string[]) => void;
+  onAcceptSuggestions: (selectedIds: string[]) => void;
+  onDismissSuggestions: (selectedIds: string[]) => void;
   onSetTransfer: (selectedIds: string[]) => void;
   onScheduleAction: (
     action: 'post-transaction' | 'post-transaction-today' | 'skip' | 'complete',
@@ -60,6 +63,8 @@ export function SelectedTransactionsButton({
   onUnlinkSchedule,
   onCreateRule,
   onRunRules,
+  onAcceptSuggestions,
+  onDismissSuggestions,
   onSetTransfer,
   onScheduleAction,
   showMakeTransfer,
@@ -111,6 +116,16 @@ export function SelectedTransactionsButton({
       })
     );
   }, [types.preview, selectedIds, getTransaction]);
+
+  // shortcut: only rows loaded in the table are checked; the review filter
+  // always loads the rows that have suggestions, so it is fine there
+  const isSuggestionsEnabled = useFeatureFlag('transactionSuggestions');
+  const hasSuggestions = useMemo(
+    () =>
+      isSuggestionsEnabled &&
+      selectedIds.some(id => getTransaction(id)?.suggestions),
+    [isSuggestionsEnabled, selectedIds, getTransaction],
+  );
 
   const twoTransactions: [TransactionEntity, TransactionEntity] | undefined =
     useMemo(() => {
@@ -361,6 +376,18 @@ export function SelectedTransactionsButton({
                     } as const,
                   ]),
 
+              ...(hasSuggestions
+                ? [
+                    {
+                      name: 'accept-suggestions',
+                      text: t('Accept suggestions'),
+                    } as const,
+                    {
+                      name: 'dismiss-suggestions',
+                      text: t('Dismiss suggestions'),
+                    } as const,
+                  ]
+                : []),
               ...(showMakeTransfer
                 ? [
                     {
@@ -452,6 +479,12 @@ export function SelectedTransactionsButton({
             break;
           case 'set-transfer':
             onSetTransfer(selectedIds);
+            break;
+          case 'accept-suggestions':
+            onAcceptSuggestions(selectedIds);
+            break;
+          case 'dismiss-suggestions':
+            onDismissSuggestions(selectedIds);
             break;
           default:
             // @ts-expect-error fix me
