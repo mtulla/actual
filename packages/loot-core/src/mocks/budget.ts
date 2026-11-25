@@ -10,6 +10,7 @@ import { runHandler, runMutator } from '#server/mutators';
 import * as sheet from '#server/sheet';
 import { batchMessages, setSyncingMode } from '#server/sync';
 import * as monthUtils from '#shared/months';
+import * as Platform from '#shared/platform';
 import { q } from '#shared/query';
 import type { Handlers } from '#types/handlers';
 import type {
@@ -137,6 +138,157 @@ function getChildTagNotes(categoryName: string, amount: number): string {
   }
 
   return tags.join(' ');
+}
+
+// One example of each kind of transaction suggestion, for trying out the
+// experimental feature (Settings → Experimental → Transaction suggestions)
+async function fillSuggestionExamples(
+  handlers: Handlers,
+  accounts: { name: string; id?: string }[],
+  payees: PayeeEntity[],
+  groups: CategoryGroupEntity[],
+) {
+  const accountId = (name: string) => accounts.find(a => a.name === name).id;
+  const payeeId = (name: string) => payees.find(p => p.name === name).id;
+  const categoryId = (name: string) =>
+    groups.flatMap(g => g.categories).find(c => c.name === name).id;
+  const newPayee = (name: string) => handlers['payee-create']({ name });
+  const daysAgo = (days: number) =>
+    monthUtils.subDays(monthUtils.currentDay(), days);
+
+  // Called directly, not with runHandler: this already runs inside a
+  // mutator, and mutators run one at a time.
+  // Rules that suggest instead of set, so new imports get suggestions too
+  const krogerRule = await handlers['rule-add']({
+    stage: null,
+    conditionsOp: 'and',
+    conditions: [{ op: 'contains', field: 'imported_payee', value: 'KROGER' }],
+    actions: [{ op: 'suggest', field: 'payee', value: payeeId('Kroger') }],
+  });
+  const moviesRule = await handlers['rule-add']({
+    stage: null,
+    conditionsOp: 'and',
+    // Two conditions, so category learning doesn't treat it as the
+    // payee's learned rule
+    conditions: [
+      { op: 'is', field: 'payee', value: payeeId('Movies') },
+      { op: 'is', field: 'account', value: accountId('Bank of America') },
+    ],
+    actions: [
+      {
+        op: 'suggest',
+        field: 'category',
+        value: categoryId('Entertainment'),
+      },
+    ],
+  });
+  const fromRule = (
+    rule: { id?: string } | { error: unknown },
+    value: string,
+  ) => ({
+    value,
+    source: 'rule' as const,
+    ...('id' in rule && { source_id: rule.id }),
+  });
+  const fromApi = <Value>(value: Value) => ({
+    value,
+    source: 'api' as const,
+    source_id: 'demo',
+  });
+
+  const bankOfAmerica = accountId('Bank of America');
+  const kroger = await newPayee('KROGER #1182 ATL GA');
+  const amazon = await newPayee('AMZN Mktp US*2K4L1');
+  const transferOut = {
+    id: uuidv4(),
+    payee: await newPayee('Online transfer to SAV 4471'),
+  };
+  const transferIn = {
+    id: uuidv4(),
+    payee: await newPayee('Transfer from CHK 8812'),
+  };
+
+  await handlers['transactions-batch-update']({
+    added: [
+      {
+        id: uuidv4(),
+        account: bankOfAmerica,
+        date: daysAgo(1),
+        amount: -1850,
+        payee: payeeId('Movies'),
+        suggestions: {
+          category: fromRule(moviesRule, categoryId('Entertainment')),
+        },
+      },
+      {
+        id: uuidv4(),
+        account: bankOfAmerica,
+        date: daysAgo(2),
+        amount: -6412,
+        payee: kroger,
+        imported_payee: 'KROGER #1182 ATL GA',
+        category: categoryId('Food'),
+        suggestions: { payee: fromRule(krogerRule, payeeId('Kroger')) },
+      },
+      {
+        id: uuidv4(),
+        account: accountId('Capital One Checking'),
+        date: daysAgo(2),
+        amount: -3147,
+        payee: amazon,
+        imported_payee: 'AMZN Mktp US*2K4L1',
+        category: categoryId('Gift'),
+        suggestions: {
+          payee: fromApi(payeeId('Online store')),
+          notes: fromApi('Paper towels, dish soap'),
+          category: fromApi(categoryId('General')),
+        },
+      },
+      {
+        id: uuidv4(),
+        account: bankOfAmerica,
+        date: daysAgo(6),
+        amount: -4200,
+        payee: payeeId('Publix'),
+        category: categoryId('General'),
+        cleared: true,
+        reconciled: true,
+        suggestions: { category: fromApi(categoryId('Food')) },
+      },
+      {
+        id: uuidv4(),
+        account: bankOfAmerica,
+        date: daysAgo(3),
+        amount: -18235,
+        payee: payeeId('Home Depot'),
+        category: categoryId('General'),
+        suggestions: {
+          split: fromApi([
+            { amount: -12110, category: categoryId('General') },
+            { amount: -6125, category: categoryId('Gift') },
+          ]),
+        },
+      },
+      {
+        ...transferOut,
+        account: bankOfAmerica,
+        date: daysAgo(4),
+        amount: -50000,
+        imported_payee: 'Online transfer to SAV 4471',
+        category: categoryId('Savings'),
+        suggestions: { transfer: fromApi(transferIn.id) },
+      },
+      {
+        ...transferIn,
+        account: accountId('Ally Savings'),
+        date: daysAgo(4),
+        amount: 50000,
+        imported_payee: 'Transfer from CHK 8812',
+        category: categoryId('Savings'),
+        suggestions: { transfer: fromApi(transferOut.id) },
+      },
+    ],
+  });
 }
 
 async function insertDemoTags(handlers: Handlers) {
@@ -901,6 +1053,10 @@ export async function createTestBudget(handlers: Handlers) {
           console.error('Unknown account name for test budget: ', account.name);
           await fillChecking(handlers, account, payees, allGroups);
         }
+      }
+      // Left out of the end-to-end tests, which assert on the demo data
+      if (!Platform.isPlaywright) {
+        await fillSuggestionExamples(handlers, accounts, payees, allGroups);
       }
     }),
   );
