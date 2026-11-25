@@ -81,9 +81,9 @@ describe('getTransferLinkUpdates', () => {
     { id: 'to-401k', transfer_acct: '401k' },
   ];
   const accounts = [
-    { id: 'checking', offbudget: 0 },
-    { id: 'savings', offbudget: 0 },
-    { id: '401k', offbudget: 1 },
+    { id: 'checking', offbudget: false },
+    { id: 'savings', offbudget: false },
+    { id: '401k', offbudget: true },
   ];
   const leg = (id, account, amount) => ({
     id,
@@ -91,7 +91,7 @@ describe('getTransferLinkUpdates', () => {
     amount,
     date: '2024-01-01',
     category: 'food',
-    suggestions: { transfer: { value: 'x', source: 'api' } },
+    suggestions: { transfer: { value: 'x', source: 'api' as const } },
   });
 
   test('links both legs and clears the category on budget', () => {
