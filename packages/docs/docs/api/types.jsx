@@ -137,6 +137,28 @@ export const objects = {
         </div>
       ),
     },
+    {
+      name: 'suggestions',
+      type: 'object',
+      description: (
+        <span>
+          Experimental. Pending changes for the user to review, keyed by{' '}
+          <code>payee</code>, <code>notes</code>, <code>category</code>,{' '}
+          <code>split</code> or <code>transfer</code>. Each entry is{' '}
+          <code>{'{ value, source, source_id?, confidence? }'}</code>, where{' '}
+          <code>value</code> is the suggested id, string, list of split parts or
+          the other leg's id. Use{' '}
+          <a href="#suggesttransactionchanges">
+            <code>suggestTransactionChanges</code>
+          </a>{' '}
+          to add them. See{' '}
+          <a href="/docs/experimental/transaction-suggestions">
+            transaction suggestions
+          </a>
+          .
+        </span>
+      ),
+    },
   ],
 
   account: [

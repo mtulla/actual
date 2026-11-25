@@ -212,6 +212,7 @@ const sidebars = {
             'experimental/goal-templates',
             'experimental/monthly-cleanup',
             'experimental/rule-templating',
+            'experimental/transaction-suggestions',
             'experimental/formulas',
             'experimental/balance-forecast-report',
             'experimental/budget-analysis-report',
