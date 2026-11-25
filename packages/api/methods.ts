@@ -20,6 +20,7 @@ import type {
   NoteEntity,
   RuleEntity,
   SuggestionField,
+  SuggestionValues,
   TransactionEntity,
 } from '@actual-app/core/types/models';
 import type { SyncedPrefs } from '@actual-app/core/types/prefs';
@@ -230,7 +231,7 @@ export function deleteTransaction(id: TransactionEntity['id']) {
  */
 export function suggestTransactionChanges(
   id: TransactionEntity['id'],
-  suggestions: Partial<Record<SuggestionField, string>>,
+  suggestions: SuggestionValues,
   { sourceId, confidence }: { sourceId?: string; confidence?: number } = {},
 ) {
   return send('api/transaction-suggest', {

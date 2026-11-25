@@ -146,6 +146,8 @@ export function getFieldError(type) {
       return 'Please choose a valid field for this type of rule';
     case 'invalid-template':
       return 'Invalid handlebars template';
+    case 'mixed-split-ops':
+      return 'A split cannot mix set and suggest actions';
     default:
       return 'Internal error, sorry! Please get in touch https://actualbudget.org/contact/ for support';
   }

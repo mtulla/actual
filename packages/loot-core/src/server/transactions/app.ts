@@ -6,6 +6,7 @@ import { undoable } from '#server/undo';
 import { q, Query } from '#shared/query';
 import type { QueryState } from '#shared/query';
 import { buildAcceptDiff, removeSuggestions } from '#shared/suggestions';
+import { makeChild } from '#shared/transactions';
 import type {
   AccountEntity,
   CategoryGroupEntity,
@@ -81,9 +82,14 @@ async function getLiveIds(transactions: TransactionEntity[]) {
   const values = [
     ...new Set(
       transactions.flatMap(t =>
-        [t.suggestions?.payee?.value, t.suggestions?.category?.value].filter(
-          (v): v is string => v != null,
-        ),
+        [
+          t.suggestions?.payee?.value,
+          t.suggestions?.category?.value,
+          ...(t.suggestions?.split?.value ?? []).flatMap(child => [
+            child.payee,
+            child.category,
+          ]),
+        ].filter((v): v is string => v != null),
       ),
     ),
   ];
@@ -107,15 +113,26 @@ async function acceptSuggestions({
 }: SuggestionsArgs & {
   allowReconciled?: boolean;
 }): Promise<
-  | { status: 'ok'; ids: TransactionEntity['id'][] }
+  | {
+      status: 'ok';
+      ids: TransactionEntity['id'][];
+      // Split suggestions left pending because the amount has changed
+      staleSplitIds: TransactionEntity['id'][];
+    }
   | { status: 'needs-confirmation'; reconciledIds: TransactionEntity['id'][] }
 > {
   const transactions = await getTransactionsWithSuggestions(ids);
 
   // A new payee on a transfer also rewrites the other leg, so a reconciled
   // other leg needs confirmation too
+  // (and so does splitting a transfer, which replaces the other leg)
   const transferIds = transactions
-    .filter(t => t.transfer_id && t.suggestions?.payee)
+    .filter(
+      t =>
+        t.transfer_id &&
+        (t.suggestions?.payee ||
+          (t.suggestions?.split && (!fields || fields.includes('split')))),
+    )
     .map(t => t.transfer_id);
   const { data: reconciledLegs } = transferIds.length
     ? await aqlQuery(
@@ -142,17 +159,33 @@ async function acceptSuggestions({
   // edit. Deliberately not wrapped in another batchMessages: inside one,
   // batchUpdateTransactions would read the rows from before this change.
   const liveIds = await getLiveIds(transactions);
-  const updated = transactions.map(t =>
-    buildAcceptDiff(
+  const added: TransactionEntity[] = [];
+  const staleSplitIds: TransactionEntity['id'][] = [];
+  const updated = transactions.map(t => {
+    const { subtransactions, ...diff } = buildAcceptDiff(
       t,
       fields,
       (field, value) => field === 'notes' || liveIds.has(value),
-    ),
-  );
+    );
+    if (!subtransactions) {
+      if (diff.suggestions?.split && (!fields || fields.includes('split'))) {
+        staleSplitIds.push(t.id);
+      }
+      return diff;
+    }
+    // An accepted split turns the row into a parent with new children
+    const parent = { ...t, ...diff, is_parent: true };
+    added.push(
+      ...subtransactions.map((child, index) =>
+        makeChild(parent, { ...child, sort_order: -(index + 1) }),
+      ),
+    );
+    return { ...diff, is_parent: true };
+  });
   if (updated.length > 0) {
-    await batchUpdateTransactions({ updated });
+    await batchUpdateTransactions({ added, updated });
   }
-  return { status: 'ok', ids: updated.map(u => u.id) };
+  return { status: 'ok', ids: updated.map(u => u.id), staleSplitIds };
 }
 
 async function dismissSuggestions({ ids, fields }: SuggestionsArgs) {

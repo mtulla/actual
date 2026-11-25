@@ -58,6 +58,22 @@ export type TransactionSuggestions = {
   payee?: TransactionSuggestion<PayeeEntity['id']>;
   notes?: TransactionSuggestion<string>;
   category?: TransactionSuggestion<CategoryEntity['id']>;
+  // Splits an unsplit transaction; the amounts add up to its amount
+  split?: TransactionSuggestion<SplitSuggestion[]>;
+};
+
+export type SplitSuggestion = {
+  amount: number;
+  category?: CategoryEntity['id'];
+  notes?: string;
+  payee?: PayeeEntity['id'];
 };
 
 export type SuggestionField = keyof TransactionSuggestions;
+
+// Just the suggested values, as the API takes them
+export type SuggestionValues = {
+  [Field in SuggestionField]?: NonNullable<
+    TransactionSuggestions[Field]
+  >['value'];
+};

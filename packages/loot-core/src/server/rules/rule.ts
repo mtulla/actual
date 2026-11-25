@@ -1,4 +1,5 @@
 import type { TransactionForRules } from '#server/transactions/transaction-rules';
+import { mergeSuggestions } from '#shared/suggestions';
 // @ts-strict-ignore
 import {
   addSplitTransaction,
@@ -7,9 +8,9 @@ import {
   splitTransaction,
   ungroupTransaction,
 } from '#shared/transactions';
-import type { RuleEntity } from '#types/models';
+import type { RuleEntity, SplitSuggestion } from '#types/models';
 
-import { Action } from './action';
+import { Action, areSuggestActionsEnabled } from './action';
 import { Condition } from './condition';
 
 function execNonSplitActions(actions: Action[], transaction) {
@@ -23,7 +24,11 @@ function getSplitRemainder(transactions) {
   return error ? error.difference : 0;
 }
 
-function execSplitActions(actions: Action[], transaction) {
+function execSplitActions(
+  actions: Action[],
+  transaction,
+  exec = (action: Action, t) => action.exec(t),
+) {
   const splitAmountActions = actions.filter(
     action => action.op === 'set-split-amount',
   );
@@ -56,7 +61,7 @@ function execSplitActions(actions: Action[], transaction) {
     newTransactions[splitTransactionIndex].balance = transaction.balance;
     newTransactions[splitTransactionIndex]._balanceOfPrefetched =
       transaction._balanceOfPrefetched;
-    action.exec(newTransactions[splitTransactionIndex]);
+    exec(action, newTransactions[splitTransactionIndex]);
   });
 
   // Distribute to fixed-percent splits.
@@ -100,6 +105,38 @@ function execSplitActions(actions: Action[], transaction) {
   return recalculateSplit(groupTransaction(newTransactions));
 }
 
+// A split made of `suggest` actions is stored as a suggestion; the
+// transaction itself stays unsplit
+function suggestSplit(actions: Action[], transaction) {
+  if (
+    transaction.is_parent ||
+    transaction.is_child ||
+    !areSuggestActionsEnabled()
+  ) {
+    return transaction;
+  }
+  const split = execSplitActions(actions, { ...transaction }, (action, t) =>
+    action.execAsSet(t),
+  );
+  if (split.error) {
+    return transaction;
+  }
+  const value = split.subtransactions.map((child): SplitSuggestion => ({
+    amount: child.amount,
+    ...(child.category && { category: child.category }),
+    ...(child.notes && { notes: child.notes }),
+    ...(child.payee &&
+      child.payee !== transaction.payee && { payee: child.payee }),
+  }));
+  const ruleId = actions.find(action => action.ruleId)?.ruleId;
+  return {
+    ...transaction,
+    suggestions: mergeSuggestions(transaction.suggestions, {
+      split: { value, source: 'rule', ...(ruleId && { source_id: ruleId }) },
+    }),
+  };
+}
+
 export function execActions(actions: Action[], transaction) {
   const parentActions = actions.filter(action => !action.options?.splitIndex);
   const childActions = actions.filter(action => action.options?.splitIndex);
@@ -120,6 +157,9 @@ export function execActions(actions: Action[], transaction) {
     return nonSplitResult;
   }
 
+  if (childActions.some(action => action.op === 'suggest')) {
+    return suggestSplit(childActions, nonSplitResult);
+  }
   return execSplitActions(childActions, nonSplitResult);
 }
 

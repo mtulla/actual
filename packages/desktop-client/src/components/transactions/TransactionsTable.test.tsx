@@ -980,6 +980,46 @@ describe('Transactions', () => {
       expect(getTransactions()[2]).toMatchObject({ payee, suggestions: null });
     });
 
+    test('a suggested split shows its parts and can be accepted', async () => {
+      const categoryId = categoryGroups[1].categories?.[0].id ?? '';
+      const transactions = generateTransactions(5, [6]);
+      const { id, amount } = transactions[2];
+      transactions[2] = {
+        ...transactions[2],
+        reconciled: false,
+        suggestions: {
+          split: {
+            value: [
+              { amount: amount - 100, category: categoryId },
+              { amount: 100, notes: 'Part two' },
+            ],
+            source: 'api',
+          },
+        },
+      };
+      const { container, getTransactions } = renderTransactions({
+        transactions,
+      });
+
+      expect(queryField(container, 'category', 'div', 2).textContent).toContain(
+        'Split into 2',
+      );
+      expect(screen.getByText('Part two')).toBeTruthy();
+
+      await userEvent.click(
+        screen.getAllByRole('button', { name: /^Accept suggestions/ })[0],
+      );
+      const children = getTransactions().filter(t => t.parent_id === id);
+      expect(getTransactions().find(t => t.id === id)).toMatchObject({
+        is_parent: true,
+        suggestions: null,
+      });
+      expect(children.map(c => [c.amount, c.category, c.notes])).toEqual([
+        [amount - 100, categoryId, undefined],
+        [100, transactions[2].category, 'Part two'],
+      ]);
+    });
+
     test('editing a field by hand replaces only its suggestion', async () => {
       const { container, categoryId, getTransactions } =
         renderWithSuggestions();

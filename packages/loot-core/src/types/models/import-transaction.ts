@@ -1,3 +1,5 @@
+import type { TransactionSuggestions } from './transaction';
+
 /**
  * Represents a transaction object specifically for import operations.
  * This type is used when importing transactions from external sources.
@@ -43,6 +45,10 @@ export type ImportTransactionEntity = {
 
   /** A flag indicating if the transaction has cleared or not */
   cleared?: boolean;
+
+  /** Pending suggestions for review (experimental). Their source is always
+   * set to "api" */
+  suggestions?: TransactionSuggestions | null;
 
   /** An array of subtransactions for a split transaction.
    * Only available in get or create/import requests.

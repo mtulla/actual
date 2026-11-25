@@ -31,6 +31,7 @@ import type {
   RuleEntity,
   ScheduleEntity,
   SuggestionField,
+  SuggestionValues,
   TransactionEntity,
 } from './models';
 
@@ -151,7 +152,7 @@ export type ApiHandlers = {
 
   'api/transaction-suggest': (arg: {
     id: TransactionEntity['id'];
-    suggestions: Partial<Record<SuggestionField, string>>;
+    suggestions: SuggestionValues;
     sourceId?: string;
     confidence?: number;
   }) => Promise<void>;

@@ -1346,6 +1346,117 @@ describe('API CRUD operations', () => {
     expect(b.suggestions).toBeNull();
   });
 
+  test('Transactions: a suggested split can be accepted', async () => {
+    const accountId = await api.createAccount({ name: 'split-account' }, 0);
+    const [group] = await api.getCategoryGroups();
+    const food = await api.createCategory({
+      name: 'Split food',
+      group_id: group.id,
+    });
+    const fun = await api.createCategory({
+      name: 'Split fun',
+      group_id: group.id,
+    });
+    await api.addTransactions(accountId, [
+      { date: '2023-11-06', amount: -15000 },
+      { date: '2023-11-07', amount: -9000 },
+    ]);
+    const getAll = () =>
+      api.getTransactions(accountId, '2023-11-01', '2023-11-30');
+    const all = await getAll();
+    const byAmount = (amount: number) => all.find(t => t.amount === amount)!;
+    const [first, second] = [byAmount(-15000), byAmount(-9000)];
+    const split = (amount: number) => ({
+      split: [
+        { amount: amount + 5000, category: food },
+        { amount: -5000, category: fun, notes: 'Movie' },
+      ],
+    });
+    await api.suggestTransactionChanges(first.id, split(-15000));
+    await api.suggestTransactionChanges(second.id, split(-9000));
+    // The amount changes after the suggestion was made
+    await api.updateTransaction(second.id, { amount: -10000 });
+    await expect(
+      api.suggestTransactionChanges(first.id, split(-1)),
+    ).rejects.toThrow('must add up');
+
+    expect(await api.acceptSuggestions([first.id, second.id])).toEqual({
+      status: 'ok',
+      ids: expect.arrayContaining([first.id, second.id]),
+      staleSplitIds: [second.id],
+    });
+
+    const after = await getAll();
+    const [a, b] = [first, second].map(t => after.find(x => x.id === t.id)!);
+    expect(a.is_parent).toBe(true);
+    expect(a.suggestions).toBeNull();
+    expect(
+      a.subtransactions?.map(({ amount, category, notes }) => ({
+        amount,
+        category,
+        notes,
+      })),
+    ).toEqual([
+      { amount: -10000, category: food, notes: null },
+      { amount: -5000, category: fun, notes: 'Movie' },
+    ]);
+    expect(b.is_parent).toBe(false);
+    expect(b.suggestions?.split).toBeDefined();
+  });
+
+  test('Transactions: split suggestions must fit their transaction', async () => {
+    const accountId = await api.createAccount({ name: 'split-check' }, 0);
+    await expect(
+      api.addTransactions(accountId, [
+        {
+          date: '2023-11-08',
+          amount: -1000,
+          suggestions: {
+            split: {
+              value: [{ amount: -600 }, { amount: -300 }],
+              source: 'api',
+            },
+          },
+        },
+      ]),
+    ).rejects.toThrow('must add up');
+  });
+
+  test('Rules: a split cannot mix set and suggest actions', async () => {
+    const [category] = (await api.getCategories()).filter(c => !c.is_income);
+    await expect(
+      api.createRule({
+        stage: null,
+        conditionsOp: 'and',
+        conditions: [{ field: 'notes', op: 'is', value: 'mixed' }],
+        actions: [
+          {
+            op: 'set-split-amount',
+            value: null,
+            options: { splitIndex: 1, method: 'remainder' },
+          },
+          {
+            op: 'set',
+            field: 'category',
+            value: category.id,
+            options: { splitIndex: 1 },
+          },
+          {
+            op: 'set-split-amount',
+            value: null,
+            options: { splitIndex: 2, method: 'remainder' },
+          },
+          {
+            op: 'suggest',
+            field: 'category',
+            value: category.id,
+            options: { splitIndex: 2 },
+          },
+        ],
+      }),
+    ).rejects.toThrow();
+  });
+
   test('Transactions: a new payee on a transfer with a reconciled other leg needs confirmation', async () => {
     const fromId = await api.createAccount({ name: 'suggest-from' }, 0);
     const toId = await api.createAccount({ name: 'suggest-to' }, 0);

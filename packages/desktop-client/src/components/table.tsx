@@ -1385,26 +1385,29 @@ export function useTableNavigator<T extends TableItem>(
     }, 100);
   }
 
+  // Rows without fields (read-only preview rows) are skipped
   function onFocusPrevious() {
     const idx = data.findIndex(item => item.id === editingId);
-    if (idx > 0) {
-      const item = data[idx - 1];
-      const fields = getFields(item);
-      onEdit(item.id, fields[fields.length - 1]);
-    } else {
-      flashInput();
+    for (let i = idx - 1; i >= 0; i--) {
+      const fields = getFields(data[i]);
+      if (fields.length > 0) {
+        onEdit(data[i].id, fields[fields.length - 1]);
+        return;
+      }
     }
+    flashInput();
   }
 
   function onFocusNext() {
     const idx = data.findIndex(item => item.id === editingId);
-    if (idx < data.length - 1) {
-      const item = data[idx + 1];
-      const fields = getFields(item);
-      onEdit(item.id, fields[0]);
-    } else {
-      flashInput();
+    for (let i = idx + 1; i < data.length; i++) {
+      const fields = getFields(data[i]);
+      if (fields.length > 0) {
+        onEdit(data[i].id, fields[0]);
+        return;
+      }
     }
+    flashInput();
   }
 
   function moveHorizontally(dir) {
