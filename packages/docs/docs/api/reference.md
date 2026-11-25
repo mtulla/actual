@@ -23,7 +23,10 @@ import APIList from './APIList';
 "getTransactions",
 "updateTransaction",
 "deleteTransaction",
-"mergeTransactions"
+"mergeTransactions",
+"suggestTransactionChanges",
+"acceptSuggestions",
+"dismissSuggestions"
 ]} />
 
 <APIList title="Accounts" sections={[
@@ -359,6 +362,45 @@ The order of the ids does not decide which transaction survives:
 The surviving transaction keeps its own field values and fills in any empty ones from the deleted transaction. It is marked cleared if either transaction was.
 
 The merge fails if you pass the same id twice, or if the two transactions are in different accounts, have different amounts, or are transfers to different accounts.
+
+#### `suggestTransactionChanges`
+
+<Method name="suggestTransactionChanges" args={[{ name: 'id', type: 'id'}, { name: 'suggestions', type: 'object' }, { name: 'options', type: 'object' }]} />
+
+:::warning Experimental
+Suggestions are only shown when [Transaction suggestions](../experimental/transaction-suggestions.md) is turned on.
+:::
+
+Proposes changes to a transaction for the user to review in the app, instead of making them. Nothing on the transaction changes until the suggestion is accepted. `suggestions` can contain:
+
+- `payee`: a payee `id`
+- `notes`: a string
+- `category`: a category `id`
+- `split`: a list of parts, each `{ amount, category?, notes?, payee? }`. The amounts must add up to the transaction's amount, and the transaction must not be split already.
+- `transfer`: the `id` of the other leg of a transfer. The two transactions must be unsplit, in different accounts, have opposite amounts and not be transfers already. The suggestion is stored on both legs. Transfers can only be suggested with this method, not with `addTransactions`, `importTransactions` or `updateTransaction`.
+
+New suggestions are merged with the pending ones, so a later call for `notes` keeps an earlier `category` suggestion. `options` can contain a `sourceId` (a short name for your tool) and a `confidence` between 0 and 1. Both are stored with the suggestion; the app doesn't show them.
+
+#### `acceptSuggestions`
+
+<Method name="acceptSuggestions" args={[{ name: 'ids', type: 'id[]'}, { name: 'fields', type: 'string[]' }, { name: 'options', type: 'object' }]} />
+
+Applies the pending suggestions of `ids`, or only those for the given `fields`. If any of `ids` is reconciled (or is a transfer whose other leg is reconciled), nothing is applied and it returns `{ status: 'needs-confirmation', reconciledIds }`; call it again with `options.allowReconciled: true` to apply them all. Otherwise it returns `{ status: 'ok', ids, staleIds }`, where `staleIds` are transactions whose split or transfer suggestion no longer fits (for example, the amount changed) and stays pending. A suggested payee or category that has been deleted since is removed without being applied.
+
+#### `dismissSuggestions`
+
+<Method name="dismissSuggestions" args={[{ name: 'ids', type: 'id[]'}, { name: 'fields', type: 'string[]' }]} />
+
+Removes the pending suggestions of `ids`, or only those for the given `fields`, without applying them. Dismissing a transfer suggestion removes it from both legs. Returns `{ ids }`, the transactions that were updated, including other legs.
+
+```js
+// Suggest a cleaner payee and a category for an imported transaction
+await suggestTransactionChanges(
+  id,
+  { payee: chefBistro.id, category: restaurants.id },
+  { sourceId: 'my-categorizer', confidence: 0.8 },
+);
+```
 
 #### Examples
 
