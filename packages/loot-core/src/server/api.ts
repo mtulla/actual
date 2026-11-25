@@ -21,6 +21,7 @@ import {
   ungroupTransactions,
   updateTransaction,
 } from '#shared/transactions';
+import { validForTransfer } from '#shared/transfer';
 import { integerToAmount } from '#shared/util';
 import type { Handlers } from '#types/handlers';
 import type {
@@ -766,6 +767,10 @@ async function withValidSuggestions<T extends SplitTarget>(
         return t;
       }
       const suggestions = await validateApiSuggestions(t.suggestions);
+      if (suggestions?.transfer) {
+        // It needs both legs checked and written, which only suggest does
+        throw APIError('Use suggestTransactionChanges to suggest a transfer');
+      }
       if (checkSplit) {
         checkSplitFits(t, suggestions);
       }
@@ -874,16 +879,29 @@ handlers['api/transaction-suggest'] = withMutation(async function ({
   confidence,
 }) {
   checkFileOpen();
+  const ids = [id, ...(suggestions.transfer ? [suggestions.transfer] : [])];
   const { data } = await aqlQuery(
     q('transactions')
-      .filter({ id })
-      .select(['id', 'suggestions', 'amount', 'is_parent', 'is_child'])
+      .filter({ id: { $oneof: ids } })
+      .select('*')
       .options({ splits: 'all' }),
   );
-  if (data.length === 0) {
+  const transaction = data.find(t => t.id === id);
+  if (!transaction) {
     throw APIError('Transaction not found: ' + id);
   }
-  const [transaction] = data;
+  const otherLeg = data.find(t => t.id === suggestions.transfer);
+  if (suggestions.transfer) {
+    if (
+      !otherLeg ||
+      [transaction, otherLeg].some(t => t.is_parent || t.is_child) ||
+      !validForTransfer(transaction, otherLeg)
+    ) {
+      throw APIError(
+        'Invalid suggestion: a transfer needs two unsplit transactions in different accounts, with opposite amounts, that are not transfers yet',
+      );
+    }
+  }
 
   const incoming = await validateApiSuggestions(
     Object.fromEntries(
@@ -899,10 +917,21 @@ handlers['api/transaction-suggest'] = withMutation(async function ({
   );
   checkSplitFits(transaction, incoming);
   // Merge instead of replace, so suggestions from rules or other tools on
-  // other fields are kept.
+  // other fields are kept. A transfer suggestion goes on both legs.
+  const transfer = incoming?.transfer;
   await handlers['transactions-batch-update']({
     updated: [
       { id, suggestions: mergeSuggestions(transaction.suggestions, incoming) },
+      ...(otherLeg && transfer
+        ? [
+            {
+              id: otherLeg.id,
+              suggestions: mergeSuggestions(otherLeg.suggestions, {
+                transfer: { ...transfer, value: id },
+              }),
+            },
+          ]
+        : []),
     ],
   });
 });

@@ -60,6 +60,9 @@ export type TransactionSuggestions = {
   category?: TransactionSuggestion<CategoryEntity['id']>;
   // Splits an unsplit transaction; the amounts add up to its amount
   split?: TransactionSuggestion<SplitSuggestion[]>;
+  // Links this transaction and the other leg (the value) as a transfer.
+  // Stored on both legs, each pointing at the other.
+  transfer?: TransactionSuggestion<TransactionEntity['id']>;
 };
 
 export type SplitSuggestion = {

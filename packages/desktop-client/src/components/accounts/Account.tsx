@@ -872,14 +872,14 @@ class AccountInternal extends PureComponent<
       );
       return;
     }
-    if (result.staleSplitIds.length > 0) {
+    if (result.staleIds.length > 0) {
       this.props.dispatch(
         addNotification({
           notification: {
             type: 'error',
             message: t(
-              "{{count}} suggested splits no longer add up to their transaction's amount, so they were not applied.",
-              { count: result.staleSplitIds.length },
+              '{{count}} suggested splits or transfers no longer fit their transactions, so they were not applied.',
+              { count: result.staleIds.length },
             ),
           },
         }),
