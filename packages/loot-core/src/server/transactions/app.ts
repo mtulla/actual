@@ -7,6 +7,7 @@ import { q, Query } from '#shared/query';
 import type { QueryState } from '#shared/query';
 import { buildAcceptDiff, removeSuggestions } from '#shared/suggestions';
 import { makeChild } from '#shared/transactions';
+import { getTransferLinkUpdates, validForTransfer } from '#shared/transfer';
 import type {
   AccountEntity,
   CategoryGroupEntity,
@@ -106,6 +107,28 @@ async function getLiveIds(transactions: TransactionEntity[]) {
   return new Set(rows.map(row => row.id));
 }
 
+// The other legs of suggested transfers, by id
+async function getTransferLegs(
+  transactions: TransactionEntity[],
+): Promise<Map<TransactionEntity['id'], TransactionEntity>> {
+  const ids = transactions
+    .map(t => t.suggestions?.transfer?.value)
+    .filter((id): id is string => id != null);
+  if (ids.length === 0) {
+    return new Map();
+  }
+  const { data } = await aqlQuery(
+    q('transactions')
+      .filter({ id: { $oneof: ids } })
+      .select('*')
+      .options({ splits: 'all' }),
+  );
+  return new Map((data as TransactionEntity[]).map(t => [t.id, t]));
+}
+
+const wants = (fields: SuggestionField[] | undefined, field: SuggestionField) =>
+  !fields || fields.includes(field);
+
 async function acceptSuggestions({
   ids,
   fields,
@@ -116,16 +139,21 @@ async function acceptSuggestions({
   | {
       status: 'ok';
       ids: TransactionEntity['id'][];
-      // Split suggestions left pending because the amount has changed
-      staleSplitIds: TransactionEntity['id'][];
+      // Split and transfer suggestions left pending because they no longer
+      // fit: the amount changed, or the other leg changed or is gone
+      staleIds: TransactionEntity['id'][];
     }
   | { status: 'needs-confirmation'; reconciledIds: TransactionEntity['id'][] }
 > {
   const transactions = await getTransactionsWithSuggestions(ids);
+  const transferLegs = wants(fields, 'transfer')
+    ? await getTransferLegs(transactions)
+    : new Map<TransactionEntity['id'], TransactionEntity>();
 
-  // A new payee on a transfer also rewrites the other leg, so a reconciled
-  // other leg needs confirmation too
-  // (and so does splitting a transfer, which replaces the other leg)
+  // A new payee on a transfer also rewrites the other leg, and accepting a
+  // suggested transfer changes the other leg too, so a reconciled other leg
+  // needs confirmation as well (and so does splitting a transfer, which
+  // replaces the other leg)
   const transferIds = transactions
     .filter(
       t =>
@@ -147,7 +175,9 @@ async function acceptSuggestions({
   const reconciledIds = transactions
     .filter(
       t =>
-        t.reconciled || (t.transfer_id && reconciledLegIds.has(t.transfer_id)),
+        t.reconciled ||
+        (t.transfer_id && reconciledLegIds.has(t.transfer_id)) ||
+        transferLegs.get(t.suggestions?.transfer?.value ?? '')?.reconciled,
     )
     .map(t => t.id);
   if (reconciledIds.length > 0 && !allowReconciled) {
@@ -158,23 +188,106 @@ async function acceptSuggestions({
   // suggestions together, so undo, sync and transfers behave like a manual
   // edit. Deliberately not wrapped in another batchMessages: inside one,
   // batchUpdateTransactions would read the rows from before this change.
-  const liveIds = await getLiveIds(transactions);
+  const liveIds = await getLiveIds([...transactions, ...transferLegs.values()]);
+  const isUsable = (field: SuggestionField, value: string) =>
+    field === 'notes' || liveIds.has(value);
   const added: TransactionEntity[] = [];
-  const staleSplitIds: TransactionEntity['id'][] = [];
-  const updated = transactions.map(t => {
-    const { subtransactions, ...diff } = buildAcceptDiff(
+  const staleIds: TransactionEntity['id'][] = [];
+  const byId = new Map(transactions.map(t => [t.id, t]));
+  const diffs = new Map(
+    transactions.map(t => [t.id, buildAcceptDiff(t, fields, isUsable)]),
+  );
+
+  // Suggested transfers are linked like "Make transfer" does, which sets
+  // both payees and transfer ids directly
+  const linked: Array<
+    Omit<Partial<TransactionEntity>, 'category'> & { category?: string | null }
+  > = [];
+  const [accounts, payees] =
+    transferLegs.size > 0
+      ? await Promise.all([db.getAccounts(), db.getPayees()])
+      : [[], []];
+  for (const t of transactions) {
+    const other = transferLegs.get(t.suggestions?.transfer?.value ?? '');
+    if (
+      !t.suggestions?.transfer ||
+      !wants(fields, 'transfer') ||
+      diffs.get(t.id) == null
+    ) {
+      continue;
+    }
+    const otherDiff = other ? diffs.get(other.id) : undefined;
+    // Already linked another way: the suggestion is moot
+    if (other && t.transfer_id === other.id) {
+      const ownDiff = diffs.get(t.id);
+      if (ownDiff) {
+        ownDiff.suggestions = removeSuggestions(ownDiff.suggestions, [
+          'transfer',
+        ]);
+      }
+      if (otherDiff) {
+        otherDiff.suggestions = removeSuggestions(otherDiff.suggestions, [
+          'transfer',
+        ]);
+      } else {
+        linked.push({
+          id: other.id,
+          suggestions: removeSuggestions(other.suggestions, ['transfer']),
+        });
+      }
+      continue;
+    }
+    if (
+      !other ||
+      // Both legs must point at each other, so a leg is never linked twice
+      other.suggestions?.transfer?.value !== t.id ||
+      [t, other].some(leg => leg.is_parent || leg.is_child) ||
+      !validForTransfer(t, other) ||
+      // A split accepted at the same time makes the row a parent
+      diffs.get(t.id)?.subtransactions ||
+      otherDiff?.subtransactions
+    ) {
+      staleIds.push(t.id);
+      continue;
+    }
+    const [fromLink, toLink] = getTransferLinkUpdates(
       t,
-      fields,
-      (field, value) => field === 'notes' || liveIds.has(value),
+      other,
+      accounts,
+      payees,
     );
+    // The transfer decides the payee, so a payee suggestion on either leg
+    // is moot. The other leg's own accepted changes go along if selected.
+    const otherChanges = otherDiff ?? {
+      id: other.id,
+      suggestions: other.suggestions,
+    };
+    const resolved: SuggestionField[] = ['transfer', 'payee'];
+    linked.push(
+      {
+        ...diffs.get(t.id),
+        ...fromLink,
+        suggestions: removeSuggestions(diffs.get(t.id)?.suggestions, resolved),
+      },
+      {
+        ...otherChanges,
+        ...toLink,
+        suggestions: removeSuggestions(otherChanges.suggestions, resolved),
+      },
+    );
+    diffs.delete(t.id);
+    diffs.delete(other.id);
+  }
+
+  const updated = [...diffs.values()].map(({ subtransactions, ...diff }) => {
     if (!subtransactions) {
-      if (diff.suggestions?.split && (!fields || fields.includes('split'))) {
-        staleSplitIds.push(t.id);
+      if (diff.suggestions?.split && wants(fields, 'split')) {
+        staleIds.push(diff.id);
       }
       return diff;
     }
     // An accepted split turns the row into a parent with new children
-    const parent = { ...t, ...diff, is_parent: true };
+    const parent = { ...byId.get(diff.id)!, ...diff, is_parent: true };
     added.push(
       ...subtransactions.map((child, index) =>
         makeChild(parent, { ...child, sort_order: -(index + 1) }),
@@ -182,22 +295,48 @@ async function acceptSuggestions({
     );
     return { ...diff, is_parent: true };
   });
+  if (linked.length > 0) {
+    await batchUpdateTransactions({
+      // `category: null` clears it; the entity type has no null category
+      updated: linked as Array<Partial<TransactionEntity>>,
+      runTransfers: false,
+    });
+  }
   if (updated.length > 0) {
     await batchUpdateTransactions({ added, updated });
   }
-  return { status: 'ok', ids: updated.map(u => u.id), staleSplitIds };
+  return {
+    status: 'ok',
+    ids: [...linked, ...updated].flatMap(u => (u.id ? [u.id] : [])),
+    staleIds,
+  };
 }
 
 async function dismissSuggestions({ ids, fields }: SuggestionsArgs) {
   const transactions = await getTransactionsWithSuggestions(ids);
-  const updated = transactions.map(t => ({
-    id: t.id,
-    suggestions: removeSuggestions(t.suggestions, fields),
-  }));
-  if (updated.length > 0) {
-    await batchUpdateTransactions({ updated });
+  const updated = new Map(
+    transactions.map(t => [
+      t.id,
+      { id: t.id, suggestions: removeSuggestions(t.suggestions, fields) },
+    ]),
+  );
+  // Dismissing a suggested transfer on one leg dismisses it on the other,
+  // when that leg points back
+  if (wants(fields, 'transfer')) {
+    for (const other of (await getTransferLegs(transactions)).values()) {
+      const backTo = other.suggestions?.transfer?.value;
+      if (backTo && updated.has(backTo) && !updated.has(other.id)) {
+        updated.set(other.id, {
+          id: other.id,
+          suggestions: removeSuggestions(other.suggestions, ['transfer']),
+        });
+      }
+    }
   }
-  return { ids: updated.map(u => u.id) };
+  if (updated.size > 0) {
+    await batchUpdateTransactions({ updated: [...updated.values()] });
+  }
+  return { ids: [...updated.keys()] };
 }
 
 async function addTransaction(transaction: TransactionEntity) {

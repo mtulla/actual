@@ -1383,7 +1383,7 @@ describe('API CRUD operations', () => {
     expect(await api.acceptSuggestions([first.id, second.id])).toEqual({
       status: 'ok',
       ids: expect.arrayContaining([first.id, second.id]),
-      staleSplitIds: [second.id],
+      staleIds: [second.id],
     });
 
     const after = await getAll();
@@ -1455,6 +1455,174 @@ describe('API CRUD operations', () => {
         ],
       }),
     ).rejects.toThrow();
+  });
+
+  test('Transactions: a suggested transfer links both legs', async () => {
+    const checking = await api.createAccount({ name: 'xfer-checking' }, 0);
+    const savings = await api.createAccount({ name: 'xfer-savings' }, 0);
+    await api.addTransactions(checking, [
+      { date: '2023-11-10', amount: -50000, imported_payee: 'To SAV' },
+      { date: '2023-11-11', amount: -1000 },
+    ]);
+    await api.addTransactions(savings, [
+      { date: '2023-11-10', amount: 50000, imported_payee: 'From CHK' },
+    ]);
+    const get = (account: string) =>
+      api.getTransactions(account, '2023-11-01', '2023-11-30');
+    const out = (await get(checking)).find(t => t.amount === -50000)!;
+    const other = (await get(checking)).find(t => t.amount === -1000)!;
+    const into = (await get(savings))[0];
+
+    // Amounts must cancel out
+    await expect(
+      api.suggestTransactionChanges(other.id, { transfer: into.id }),
+    ).rejects.toThrow('transfer');
+
+    await api.suggestTransactionChanges(out.id, { transfer: into.id });
+    expect((await get(savings))[0].suggestions).toEqual({
+      transfer: { value: out.id, source: 'api' },
+    });
+
+    // Dismissing one leg dismisses the other
+    await api.dismissSuggestions([into.id]);
+    expect((await get(checking)).find(t => t.id === out.id)?.suggestions).toBe(
+      null,
+    );
+
+    await api.suggestTransactionChanges(out.id, { transfer: into.id });
+    expect(await api.acceptSuggestions([out.id])).toMatchObject({
+      status: 'ok',
+      staleIds: [],
+    });
+    const [a, b] = [
+      (await get(checking)).find(t => t.id === out.id)!,
+      (await get(savings))[0],
+    ];
+    expect(a).toMatchObject({ transfer_id: into.id, suggestions: null });
+    expect(b).toMatchObject({ transfer_id: out.id, suggestions: null });
+    const payees = await api.getPayees();
+    expect(payees.find(p => p.id === a.payee)?.transfer_acct).toBe(savings);
+    expect(payees.find(p => p.id === b.payee)?.transfer_acct).toBe(checking);
+  });
+
+  test('Transactions: suggested transfers only link matching pairs', async () => {
+    const checking = await api.createAccount({ name: 'pair-checking' }, 0);
+    const savings = await api.createAccount({ name: 'pair-savings' }, 0);
+    await api.addTransactions(checking, [
+      { date: '2023-11-12', amount: -2000, notes: 'a' },
+      { date: '2023-11-12', amount: -2000, notes: 'c' },
+    ]);
+    await api.addTransactions(savings, [
+      { date: '2023-11-12', amount: 2000, notes: 'b' },
+    ]);
+    const all = [
+      ...(await api.getTransactions(checking, '2023-11-01', '2023-11-30')),
+      ...(await api.getTransactions(savings, '2023-11-01', '2023-11-30')),
+    ];
+    const byNotes = (notes: string) => all.find(t => t.notes === notes)!;
+    const [a, b, c] = ['a', 'b', 'c'].map(byNotes);
+
+    // Only the add path that writes both legs may suggest a transfer
+    await expect(
+      api.addTransactions(checking, [
+        {
+          date: '2023-11-13',
+          amount: -1,
+          suggestions: { transfer: { value: b.id, source: 'api' } },
+        },
+      ]),
+    ).rejects.toThrow('suggestTransactionChanges');
+
+    // b is re-pointed at c, so a's suggestion is one-sided
+    await api.suggestTransactionChanges(a.id, { transfer: b.id });
+    await api.suggestTransactionChanges(c.id, { transfer: b.id });
+    expect(await api.acceptSuggestions([a.id, c.id])).toMatchObject({
+      status: 'ok',
+      staleIds: [a.id],
+    });
+    const after = await api.getTransactions(
+      savings,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    expect(after.find(t => t.id === b.id)?.transfer_id).toBe(c.id);
+    expect(
+      (await api.getTransactions(checking, '2023-11-01', '2023-11-30')).find(
+        t => t.id === a.id,
+      )?.transfer_id,
+    ).toBeFalsy();
+  });
+
+  test('Transactions: a suggested transfer to a reconciled leg needs confirmation', async () => {
+    const checking = await api.createAccount({ name: 'rec-checking' }, 0);
+    const savings = await api.createAccount({ name: 'rec-savings' }, 0);
+    await api.addTransactions(checking, [{ date: '2023-11-14', amount: -300 }]);
+    await api.addTransactions(savings, [{ date: '2023-11-14', amount: 300 }]);
+    const [out] = await api.getTransactions(
+      checking,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    const [into] = await api.getTransactions(
+      savings,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    await api.updateTransaction(into.id, { reconciled: true });
+    await api.suggestTransactionChanges(out.id, { transfer: into.id });
+    expect(await api.acceptSuggestions([out.id])).toEqual({
+      status: 'needs-confirmation',
+      reconciledIds: [out.id],
+    });
+    // Both legs selected, with notes suggested on the other leg
+    await api.suggestTransactionChanges(into.id, { notes: 'Savings' });
+    expect(
+      await api.acceptSuggestions([out.id, into.id], undefined, {
+        allowReconciled: true,
+      }),
+    ).toMatchObject({ status: 'ok', staleIds: [] });
+    const [linked] = await api.getTransactions(
+      savings,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    expect(linked).toMatchObject({
+      transfer_id: out.id,
+      notes: 'Savings',
+      suggestions: null,
+    });
+  });
+
+  test('Transactions: a transfer leg with a split suggestion is not linked', async () => {
+    const checking = await api.createAccount({ name: 'split-xfer' }, 0);
+    const savings = await api.createAccount({ name: 'split-xfer-sav' }, 0);
+    await api.addTransactions(checking, [{ date: '2023-11-15', amount: -900 }]);
+    await api.addTransactions(savings, [{ date: '2023-11-15', amount: 900 }]);
+    const [out] = await api.getTransactions(
+      checking,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    const [into] = await api.getTransactions(
+      savings,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    await api.suggestTransactionChanges(out.id, {
+      split: [{ amount: -400 }, { amount: -500 }],
+    });
+    await api.suggestTransactionChanges(out.id, { transfer: into.id });
+    expect(await api.acceptSuggestions([out.id])).toMatchObject({
+      status: 'ok',
+      staleIds: [out.id],
+    });
+    const [split] = await api.getTransactions(
+      checking,
+      '2023-11-01',
+      '2023-11-30',
+    );
+    expect(split.is_parent).toBe(true);
+    expect(split.transfer_id).toBeFalsy();
   });
 
   test('Transactions: a new payee on a transfer with a reconciled other leg needs confirmation', async () => {

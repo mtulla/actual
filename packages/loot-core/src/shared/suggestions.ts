@@ -219,12 +219,12 @@ export function validateSuggestions(
   for (const [field, entry] of Object.entries(input)) {
     if (field === 'split') {
       result.split = validateSplitEntry(entry, source);
-    } else if ((SIMPLE_FIELDS as readonly string[]).includes(field)) {
-      result[field as (typeof SIMPLE_FIELDS)[number]] = validateEntry(
-        field,
-        entry,
-        source,
-      );
+    } else if (
+      field === 'transfer' ||
+      (SIMPLE_FIELDS as readonly string[]).includes(field)
+    ) {
+      result[field as (typeof SIMPLE_FIELDS)[number] | 'transfer'] =
+        validateEntry(field, entry, source);
     } else {
       fail(`unsupported field "${field}"`);
     }

@@ -73,3 +73,61 @@ describe('Transfer', () => {
     ).toBeFalsy();
   });
 });
+
+describe('getTransferLinkUpdates', () => {
+  const payees = [
+    { id: 'to-checking', transfer_acct: 'checking' },
+    { id: 'to-savings', transfer_acct: 'savings' },
+    { id: 'to-401k', transfer_acct: '401k' },
+  ];
+  const accounts = [
+    { id: 'checking', offbudget: 0 },
+    { id: 'savings', offbudget: 0 },
+    { id: '401k', offbudget: 1 },
+  ];
+  const leg = (id, account, amount) => ({
+    id,
+    account,
+    amount,
+    date: '2024-01-01',
+    category: 'food',
+    suggestions: { transfer: { value: 'x', source: 'api' } },
+  });
+
+  test('links both legs and clears the category on budget', () => {
+    expect(
+      transfer.getTransferLinkUpdates(
+        leg('a', 'checking', -100),
+        leg('b', 'savings', 100),
+        accounts,
+        payees,
+      ),
+    ).toEqual([
+      {
+        id: 'a',
+        category: null,
+        payee: 'to-savings',
+        transfer_id: 'b',
+        suggestions: null,
+      },
+      {
+        id: 'b',
+        category: null,
+        payee: 'to-checking',
+        transfer_id: 'a',
+        suggestions: null,
+      },
+    ]);
+  });
+
+  test('keeps the category for a transfer out of the budget', () => {
+    const [from] = transfer.getTransferLinkUpdates(
+      leg('a', 'checking', -100),
+      leg('b', '401k', 100),
+      accounts,
+      payees,
+    );
+    expect(from).not.toHaveProperty('category');
+    expect(from.payee).toBe('to-401k');
+  });
+});

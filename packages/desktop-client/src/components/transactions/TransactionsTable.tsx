@@ -135,6 +135,7 @@ import { useLocalPref } from '#hooks/useLocalPref';
 import { useMergedRefs } from '#hooks/useMergedRefs';
 import { usePrevious } from '#hooks/usePrevious';
 import { useProperFocus } from '#hooks/useProperFocus';
+import { useQuery } from '#hooks/useQuery';
 import { useResizeObserver } from '#hooks/useResizeObserver';
 import { useSelectedDispatch, useSelectedItems } from '#hooks/useSelected';
 import { SheetNameProvider } from '#hooks/useSheetName';
@@ -1014,6 +1015,14 @@ function PayeeIcons({
 type TransactionProps = {
   allTransactions?: TransactionEntity[];
   transaction: TransactionEntity;
+  // The other leg's account of a suggested transfer
+  suggestedTransferAccount?: AccountEntity;
+  // Accepts or dismisses this row's suggestions on the server and reloads,
+  // for suggested transfers, which change two rows
+  onServerSuggestions?: (
+    action: 'accept' | 'dismiss',
+    id: TransactionEntity['id'],
+  ) => void;
   subtransactions: TransactionEntity[] | null;
   transferAccountsByTransaction: {
     [id: TransactionEntity['id']]: AccountEntity | null;
@@ -1087,6 +1096,8 @@ const Transaction = memo(function Transaction({
   transaction: originalTransaction,
   subtransactions,
   transferAccountsByTransaction,
+  suggestedTransferAccount,
+  onServerSuggestions,
   editing,
   columns,
   showZeroInDeposit,
@@ -1278,6 +1289,10 @@ const Transaction = memo(function Transaction({
   };
 
   const onAcceptSuggestions = async () => {
+    if (transaction.suggestions?.transfer && onServerSuggestions) {
+      onServerSuggestions('accept', transaction.id);
+      return;
+    }
     const accept = () => {
       const diff = buildAcceptDiff(transaction, undefined, (field, value) => {
         if (field === 'notes') {
@@ -1492,12 +1507,22 @@ const Transaction = memo(function Transaction({
       ? transaction.suggestions
       : null;
   // Undefined when the suggested payee or category was deleted since
-  const suggestedPayee =
-    suggestions?.payee && getPayeesById(payees)[suggestions.payee.value]?.name;
-  const suggestedCategory =
-    suggestions?.category &&
-    getCategoriesById(categoryGroups)[suggestions.category.value]?.name;
+  const suggestedPayee = suggestions?.transfer
+    ? suggestedTransferAccount &&
+      t('Transfer: {{account}}', { account: suggestedTransferAccount.name })
+    : suggestions?.payee &&
+      getPayeesById(payees)[suggestions.payee.value]?.name;
   const account = accounts && accountId && getAccountsById(accounts)[accountId];
+  // Linking clears the category unless the transfer goes in or out of the
+  // budget, the same as "Make transfer"
+  const transferClearsCategory =
+    !!suggestedTransferAccount &&
+    Boolean(suggestedTransferAccount.offbudget) ===
+      Boolean(account && account.offbudget);
+  const suggestedCategory = transferClearsCategory
+    ? t('Transfer')
+    : suggestions?.category &&
+      getCategoriesById(categoryGroups)[suggestions.category.value]?.name;
 
   const isChild = transaction.is_child;
   const transferAcct =
@@ -1516,7 +1541,11 @@ const Transaction = memo(function Transaction({
           <SuggestionActions
             payee={payee?.name}
             onAccept={onAcceptSuggestions}
-            onDismiss={() => saveSuggestionChange({ suggestions: null })}
+            onDismiss={() =>
+              suggestions?.transfer && onServerSuggestions
+                ? onServerSuggestions('dismiss', transaction.id)
+                : saveSuggestionChange({ suggestions: null })
+            }
           />
         </>
       )
@@ -2812,6 +2841,8 @@ function NewTransaction({
 }
 
 type TransactionTableInnerProps = {
+  suggestedTransferAccounts: Record<TransactionEntity['id'], AccountEntity>;
+  onServerSuggestions?: TransactionProps['onServerSuggestions'];
   tableRef: Ref<TableHandleRef<TransactionEntity>>;
   listContainerRef: RefObject<HTMLDivElement>;
   tableNavigator: TableNavigator<TransactionEntity>;
@@ -3086,6 +3117,8 @@ function TransactionTableInner({
         editing={editing}
         transaction={trans}
         transferAccountsByTransaction={props.transferAccountsByTransaction}
+        suggestedTransferAccount={props.suggestedTransferAccounts[trans.id]}
+        onServerSuggestions={props.onServerSuggestions}
         subtransactions={childTransactions}
         columns={columns}
         selected={selected}
@@ -3264,6 +3297,7 @@ type TableState = {
 };
 
 export type TransactionTableProps = {
+  onServerSuggestions?: TransactionProps['onServerSuggestions'];
   transactions: readonly TransactionEntity[];
   loadMoreTransactions: () => void;
   accounts: AccountEntity[];
@@ -3562,6 +3596,38 @@ export const TransactionTable = forwardRef(
         }),
       );
     }, [props.transactions, props.payees, props.accounts]);
+
+    // The accounts of the other legs of suggested transfers
+    const suggestedTransferIds = props.transactions
+      .map(t => t.suggestions?.transfer?.value)
+      .filter((id): id is string => id != null)
+      .join(',');
+    const { data: suggestedTransferLegs } = useQuery<{
+      id: string;
+      account: string;
+    }>(
+      () =>
+        suggestedTransferIds
+          ? q('transactions')
+              .filter({ id: { $oneof: suggestedTransferIds.split(',') } })
+              .select(['id', 'account'])
+              .options({ splits: 'all' })
+          : null,
+      [suggestedTransferIds],
+    );
+    const suggestedTransferAccounts = useMemo(() => {
+      const accounts = getAccountsById(props.accounts);
+      const legAccounts = new Map(
+        (suggestedTransferLegs ?? []).map(leg => [leg.id, leg.account]),
+      );
+      return Object.fromEntries(
+        props.transactions.flatMap(t => {
+          const leg = t.suggestions?.transfer?.value;
+          const account = leg && accounts[legAccounts.get(leg) ?? ''];
+          return account ? [[t.id, account]] : [];
+        }),
+      );
+    }, [props.transactions, props.accounts, suggestedTransferLegs]);
 
     const hasPrevSplitsExpanded = prevSplitsExpanded.current;
 
@@ -4332,6 +4398,7 @@ export const TransactionTable = forwardRef(
             transactionMap={transactionMap}
             transactionsByParent={transactionsByParent}
             transferAccountsByTransaction={transferAccountsByTransaction}
+            suggestedTransferAccounts={suggestedTransferAccounts}
             selectedItems={selectedItems}
             isExpanded={splitsExpanded.isExpanded}
             onSave={onSave}

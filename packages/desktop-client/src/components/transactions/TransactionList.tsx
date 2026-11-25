@@ -3,6 +3,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import { ErrorBoundary } from 'react-error-boundary';
+import { useTranslation } from 'react-i18next';
 
 import { theme } from '@actual-app/components/theme';
 import { send } from '@actual-app/core/platform/client/connection';
@@ -182,6 +183,7 @@ export function TransactionList({
   onMakeAsNonSplitTransactions,
 }: TransactionListProps) {
   const dispatch = useDispatch();
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [learnCategories = 'true'] = useSyncedPref('learn-categories');
   const isLearnCategoriesEnabled = String(learnCategories) === 'true';
@@ -295,6 +297,57 @@ export function TransactionList({
       );
     },
     [dispatch],
+  );
+
+  // Suggested transfers change two rows, so they are accepted and dismissed
+  // on the server, then the list is reloaded
+  const onServerSuggestions = useCallback(
+    async (action: 'accept' | 'dismiss', id: TransactionEntity['id']) => {
+      if (action === 'dismiss') {
+        await send('transactions-dismiss-suggestions', { ids: [id] });
+        onRefetch();
+        return;
+      }
+      const accept = async (allowReconciled: boolean) => {
+        const result = await send('transactions-accept-suggestions', {
+          ids: [id],
+          allowReconciled,
+        });
+        if (result.status === 'needs-confirmation') {
+          dispatch(
+            pushModal({
+              modal: {
+                name: 'confirm-transaction-edit',
+                options: {
+                  onConfirm: () => void accept(true),
+                  confirmReason: transactionsLatest.current.find(
+                    t => t.id === id,
+                  )?.reconciled
+                    ? 'editReconciled'
+                    : 'batchEditWithReconciledTransfer',
+                },
+              },
+            }),
+          );
+          return;
+        }
+        if (result.staleIds.length > 0) {
+          dispatch(
+            addNotification({
+              notification: {
+                type: 'error',
+                message: t(
+                  'The suggested transfer no longer fits these transactions, so it was not applied.',
+                ),
+              },
+            }),
+          );
+        }
+        onRefetch();
+      };
+      await accept(false);
+    },
+    [dispatch, onRefetch, t],
   );
 
   const onManagePayees = useCallback(
@@ -532,6 +585,7 @@ export function TransactionList({
         onSave={onSave}
         onApplyRules={onApplyRules}
         onSplit={onSplit}
+        onServerSuggestions={onServerSuggestions}
         onCloseAddTransaction={onCloseAddTransaction}
         onAdd={onAdd}
         onAddSplit={onAddSplit}
